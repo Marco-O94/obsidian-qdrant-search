@@ -1,0 +1,20 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "obsidian-qdrant-search"
+version = "0.1.0"
+description = "MCP server for semantic search over Obsidian vaults using Qdrant and local embeddings"
+requires-python = ">=3.11"
+dependencies = [
+    "qdrant-client>=1.7.0",
+    "fastembed>=0.8.0",
+    "mcp>=1.0.0",
+    "pyyaml>=6.0",
+    "python-frontmatter>=1.0.0",
+]
+
+[project.scripts]
+vault-search = "vault_search.server:main"
+vault-index = "vault_search.cli:index_cli"
