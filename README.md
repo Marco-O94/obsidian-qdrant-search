@@ -17,12 +17,6 @@
 
 MCP server for **semantic search** over an Obsidian vault. Uses Qdrant as vector store and FastEmbed for local embeddings.
 
-Install from [PyPI](https://pypi.org/project/obsidian-qdrant-search/):
-
-```bash
-uvx obsidian-qdrant-search
-```
-
 ## Why?
 
 Standard text search in Obsidian (and MCP tools like mcp-obsidian) is keyword-based — it only finds exact matches. This means:
