@@ -7,6 +7,22 @@ name = "obsidian-qdrant-search"
 version = "0.1.0"
 description = "MCP server for semantic search over Obsidian vaults using Qdrant and local embeddings"
 requires-python = ">=3.11"
+license = "MIT"
+authors = [
+    { name = "Marco Oliveri" },
+]
+readme = "README.md"
+keywords = ["obsidian", "qdrant", "semantic-search", "mcp", "embeddings", "vector-search"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Text Processing :: Indexing",
+]
 dependencies = [
     "qdrant-client>=1.7.0",
     "fastembed>=0.8.0",
@@ -15,6 +31,14 @@ dependencies = [
     "python-frontmatter>=1.0.0",
 ]
 
+[project.urls]
+Homepage = "https://github.com/Marco-O94/obsidian-qdrant-search"
+Repository = "https://github.com/Marco-O94/obsidian-qdrant-search"
+Issues = "https://github.com/Marco-O94/obsidian-qdrant-search/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/vault_search"]
+
 [project.scripts]
-vault-search = "vault_search.server:main"
+obsidian-qdrant-search = "vault_search.server:main"
 vault-index = "vault_search.cli:index_cli"

@@ -39,7 +39,7 @@ Standard text search in Obsidian (and MCP tools like mcp-obsidian) is keyword-ba
 **With uvx (no install needed):**
 
 ```bash
-uvx --from git+https://github.com/Marco-O94/obsidian-qdrant-search vault-search
+uvx obsidian-qdrant-search
 ```
 
 **Or install locally for development:**
@@ -54,42 +54,19 @@ Qdrant is started automatically via Docker when needed. If a `qdrant` container 
 ### 2. Initial indexing
 
 ```bash
-VAULT_PATH=/path/to/your/vault vault-index --full
-```
-
-Or with uvx:
-
-```bash
-VAULT_PATH=/path/to/your/vault uvx --from git+https://github.com/Marco-O94/obsidian-qdrant-search vault-index --full
+VAULT_PATH=/path/to/your/vault uvx --from obsidian-qdrant-search vault-index --full
 ```
 
 ## MCP Configuration
 
 Add to your `.mcp.json` (project root or Claude Code settings):
 
-**From git (no local clone needed):**
-
 ```json
 {
   "mcpServers": {
-    "vault-search": {
+    "obsidian-qdrant-search": {
       "command": "uvx",
-      "args": ["--from", "git+https://github.com/Marco-O94/obsidian-qdrant-search", "vault-search"],
-      "env": {
-        "VAULT_PATH": "/absolute/path/to/your/vault"
-      }
-    }
-  }
-}
-```
-
-**From local install:**
-
-```json
-{
-  "mcpServers": {
-    "vault-search": {
-      "command": "vault-search",
+      "args": ["obsidian-qdrant-search"],
       "env": {
         "VAULT_PATH": "/absolute/path/to/your/vault"
       }
@@ -146,7 +123,7 @@ Re-indexes the vault into Qdrant.
 
 | Command | Description |
 |---------|-------------|
-| `vault-search` | Start the MCP server (stdio transport) |
+| `obsidian-qdrant-search` | Start the MCP server (stdio transport) |
 | `vault-index` | Run indexing from the command line |
 | `vault-index --full` | Full reindex (drops existing data) |
 
