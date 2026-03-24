@@ -2,9 +2,26 @@
   <img src="banner.png" alt="obsidian-qdrant-search" width="100%">
 </p>
 
-# obsidian-qdrant-search
+# Obsidian Qdrant Search
+
+<p align="center">
+
+[![PyPI](https://img.shields.io/pypi/v/obsidian-qdrant-search?style=flat-square)](https://pypi.org/project/obsidian-qdrant-search/)
+[![Python](https://img.shields.io/pypi/pyversions/obsidian-qdrant-search?style=flat-square)](https://pypi.org/project/obsidian-qdrant-search/)
+[![License](https://img.shields.io/pypi/l/obsidian-qdrant-search?style=flat-square)](LICENSE)
+[![Qdrant](https://img.shields.io/badge/vector%20db-Qdrant-dc244c?style=flat-square&logo=qdrant)](https://qdrant.tech/)
+[![MCP](https://img.shields.io/badge/protocol-MCP-blue?style=flat-square)](https://modelcontextprotocol.io/)
+[![Obsidian](https://img.shields.io/badge/vault-Obsidian-7c3aed?style=flat-square&logo=obsidian)](https://obsidian.md/)
+
+</p>
 
 MCP server for **semantic search** over an Obsidian vault. Uses Qdrant as vector store and FastEmbed for local embeddings.
+
+Install from [PyPI](https://pypi.org/project/obsidian-qdrant-search/):
+
+```bash
+uvx obsidian-qdrant-search
+```
 
 ## Why?
 
@@ -34,30 +51,7 @@ Standard text search in Obsidian (and MCP tools like mcp-obsidian) is keyword-ba
 
 ## Quick start
 
-### 1. Install
-
-**With uvx (no install needed):**
-
-```bash
-uvx obsidian-qdrant-search
-```
-
-**Or install locally for development:**
-
-```bash
-uv venv && source .venv/bin/activate
-uv pip install -e .
-```
-
-Qdrant is started automatically via Docker when needed. If a `qdrant` container already exists, it will be reused.
-
-### 2. Initial indexing
-
-```bash
-VAULT_PATH=/path/to/your/vault uvx --from obsidian-qdrant-search vault-index --full
-```
-
-## MCP Configuration
+### 1. MCP Configuration
 
 Add to your `.mcp.json` (project root or Claude Code settings):
 
@@ -74,6 +68,24 @@ Add to your `.mcp.json` (project root or Claude Code settings):
   }
 }
 ```
+
+Qdrant is started automatically via Docker when needed. If a `qdrant` container already exists, it will be reused.
+
+### 2. Initial indexing
+
+```bash
+VAULT_PATH=/path/to/your/vault uvx --from obsidian-qdrant-search vault-index --full
+```
+
+### Slash command
+
+This repo includes a Claude Code skill at `.claude/commands/vault-search.md`. Use it with:
+
+```
+/vault-search how does authentication work
+```
+
+Claude will automatically use semantic search to find and synthesize relevant documentation.
 
 ### Environment variables
 
