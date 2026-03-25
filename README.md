@@ -81,15 +81,17 @@ Qdrant is started automatically via Docker when needed. If a `qdrant` container 
 VAULT_PATH=/path/to/your/vault uvx --from obsidian-qdrant-search vault-index --full
 ```
 
-### Slash command
+### Agent skill
 
-This repo includes a Claude Code skill at `.claude/commands/vault-search.md`. Use it with:
+This repo includes a Claude Code skill at `.claude/commands/vault-search.md` that teaches the agent how to use all 15 MCP tools effectively — search workflow, when to use semantic vs text search, how to read/write/patch files, and best practices.
+
+Copy the `.claude/commands/` directory into your project to make the skill available. Then use it as a slash command:
 
 ```
 /vault-search how does authentication work
 ```
 
-Claude will automatically use semantic search to find and synthesize relevant documentation.
+The agent will automatically choose the right tools, search the vault, and synthesize relevant documentation.
 
 ### Environment variables
 
