@@ -214,13 +214,27 @@ class TestPatchHeading:
             "# Doc\n\n## Setup\n\n### Installation\n\nInstall steps.\n\n### Configuration\n\nConfig steps.\n\n## Usage\n\nUsage info.\n"
         )
         vault_ops.patch_content(
-            "nested.md", "replace", "heading", "Setup/Installation", "New install steps."
+            "nested.md", "replace", "heading", "Setup::Installation", "New install steps."
         )
         content = (vault / "nested.md").read_text()
         assert "New install steps." in content
         assert "Install steps." not in content
         # Configuration section should be unchanged
         assert "Config steps." in content
+
+    def test_heading_with_slashes(self, vault, no_reindex):
+        # Headings containing slashes (e.g. URL paths) should work
+        (vault / "api.md").write_text(
+            "# API\n\n## GET /api/v1/users/{id}\n\nGet a user.\n\n## POST /api/v1/users\n\nCreate a user.\n"
+        )
+        vault_ops.patch_content(
+            "api.md", "replace", "heading", "GET /api/v1/users/{id}", "Updated endpoint docs."
+        )
+        content = (vault / "api.md").read_text()
+        assert "Updated endpoint docs." in content
+        assert "Get a user." not in content
+        # Other heading unchanged
+        assert "Create a user." in content
 
     def test_heading_not_found(self, vault, no_reindex):
         with pytest.raises(ValueError, match="Heading not found"):

@@ -226,7 +226,7 @@ Targeted modification of a specific section by heading or frontmatter field.
 | `filepath` | string | required | Path relative to vault root |
 | `operation` | string | required | `"append"`, `"prepend"`, or `"replace"` |
 | `target_type` | string | required | `"heading"` or `"frontmatter"` |
-| `target` | string | required | Heading text (e.g. `"Setup"` or `"Setup/Installation"`) or frontmatter field name |
+| `target` | string | required | Heading text (e.g. `"Setup"` or `"Setup::Installation"`) or frontmatter field name |
 | `content` | string | required | Content to insert or replace with |
 
 #### delete_file

@@ -86,7 +86,7 @@ patch_content(filepath, operation, target_type, target, content)
 
 - `operation`: "append", "prepend", or "replace"
 - `target_type`: "heading" or "frontmatter"
-- `target`: Heading text (e.g. "Setup" or nested "Setup/Installation") or frontmatter field name
+- `target`: Heading text (e.g. "Setup" or nested "Setup::Installation") or frontmatter field name. Use '::' to separate nested heading levels (not '/' which conflicts with URL paths in headings)
 
 #### delete_file
 Delete a file. Requires `confirm=True` as safety guard.

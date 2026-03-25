@@ -38,7 +38,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **File write operations**: `create_or_update_file`, `append_content`, `patch_content`, `delete_file`
 - **Text search**: `simple_search` for case-insensitive keyword search across all markdown files
 - **Discovery tools**: `list_tags` (frontmatter + inline tags with counts), `get_recent_changes` (recently modified files)
-- **Patch by heading**: targeted modifications to specific markdown sections, supporting nested heading paths (e.g. "Setup/Installation")
+- **Patch by heading**: targeted modifications to specific markdown sections, supporting nested heading paths (e.g. "Setup::Installation")
 - **Patch by frontmatter**: targeted modifications to frontmatter fields with append/prepend/replace operations
 - **Auto-reindex**: write operations automatically reindex the modified file in Qdrant (best-effort, never blocks writes)
 - **Path security**: all file operations validate paths to prevent traversal outside the vault

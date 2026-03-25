@@ -271,7 +271,7 @@ def patch_content(
         filepath: Path relative to vault root.
         operation: "append", "prepend", or "replace".
         target_type: "heading" or "frontmatter".
-        target: Heading text (e.g. "## Setup" or "Setup/Installation") or frontmatter field name.
+        target: Heading text (e.g. "Setup" or nested "Setup::Installation") or frontmatter field name.
         content: Content to insert/replace.
 
     Returns:
@@ -339,12 +339,13 @@ def delete_file(filepath: str, confirm: bool = False) -> dict:
 def _find_heading_range(lines: list[str], target: str) -> tuple[int, int]:
     """Find the line range for content under a heading.
 
-    Supports nested paths like "Setup/Installation" where "Setup" is an H2
-    and "Installation" is an H3 under it.
+    Supports nested paths like "Setup::Installation" where "Setup" is an H2
+    and "Installation" is an H3 under it. Uses '::' as separator to avoid
+    conflicts with '/' in heading text (e.g. URL paths in API docs).
 
     Args:
         lines: File lines.
-        target: Heading text or nested path separated by '/'.
+        target: Heading text or nested path separated by '::'.
 
     Returns:
         (start, end) — start is the line after the heading,
@@ -353,7 +354,7 @@ def _find_heading_range(lines: list[str], target: str) -> tuple[int, int]:
     Raises:
         ValueError: If the heading is not found.
     """
-    segments = [s.strip() for s in target.split("/")]
+    segments = [s.strip() for s in target.split("::")]
 
     search_start = 0
     search_end = len(lines)

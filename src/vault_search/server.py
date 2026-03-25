@@ -359,7 +359,7 @@ def patch_content(
         filepath: Path relative to vault root.
         operation: "append" (add after section), "prepend" (add before section content), or "replace" (replace section content).
         target_type: "heading" (target a markdown heading) or "frontmatter" (target a frontmatter field).
-        target: For headings: the heading text (e.g. "Setup") or nested path (e.g. "Setup/Installation"). For frontmatter: the field name.
+        target: For headings: the heading text (e.g. "Setup") or nested path using '::' separator (e.g. "Setup::Installation"). For frontmatter: the field name.
         content: Content to insert or replace with.
 
     Returns:
