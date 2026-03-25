@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-03-25
+
+### Added
+
+- **Vault map**: `get_vault_map` shows directory hierarchy with file counts and types, excluding hidden dirs
+- **Frontmatter schema discovery**: `get_frontmatter_schema` reports all frontmatter fields, types, frequency, and examples
+- **Wikilink graph**: wikilinks are now extracted and indexed during indexing (`links_to`, `links_to_raw` payload fields)
+  - `get_backlinks(filepath)` — find files linking to a given file
+  - `get_outgoing_links(filepath)` — list all wikilink targets from a file
+  - `find_broken_links()` — detect wikilinks pointing to non-existent files
+  - `find_orphan_files()` — find files with no incoming wikilinks
+- **Batch operations**:
+  - `batch_update_frontmatter` — update a frontmatter field across files filtered by project, tag, or glob (with preview/confirm)
+  - `batch_rename_tag` — rename a tag across frontmatter and inline #tags (with preview/confirm)
+- **Test suite expanded**: 76 tests (was 43), including wikilink extraction, vault map, schema discovery, and batch operations
+- **Documentation manager agent**: `.claude/agents/doc-manager.md` — autonomous agent for creating, updating, and maintaining vault documentation
+- **Vault search skill**: moved from `.claude/commands/` to `.claude/skills/vault-search/SKILL.md` (Claude Code skills format)
+
+### Changed
+
+- Server instructions updated to describe all 23 available tools
+- Qdrant payload now includes `links_to` and `links_to_raw` for wikilink graph (backward compatible)
+- New payload indexes on `links_to` and `file_path` for efficient graph queries
+- README restructured with table of contents and icons
+
 ## [0.2.0] - 2026-03-25
 
 ### Added
