@@ -84,7 +84,7 @@ You have access to 23 MCP tools via `obsidian-qdrant-search`. Use them strategic
 
 11. `create_or_update_file(filepath, content)` — create new or overwrite
 12. `append_content(filepath, content)` — add to existing doc
-13. `patch_content(filepath, operation, target_type, target, content)` — surgical edits
+13. `patch_content(filepath, operation, target_type, target, content)` — surgical edits. For nested headings use `::` separator (e.g. `"Setup::Installation"`), not `/` which conflicts with URL paths in headings
 
 ### Maintenance Phase
 
