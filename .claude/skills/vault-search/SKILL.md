@@ -110,19 +110,74 @@ Returns recently modified `.md` files sorted by date.
 get_recent_changes(days?, limit?)
 ```
 
+#### get_vault_map
+Shows directory hierarchy with file counts and types. Use to understand vault organization.
+
+```
+get_vault_map(max_depth?)
+```
+
+#### get_frontmatter_schema
+Lists all frontmatter fields used across the vault with types, frequency, and examples.
+
+### Graph
+
+#### get_backlinks
+Find all files that link TO a given file via wikilinks.
+
+```
+get_backlinks(filepath)
+```
+
+#### get_outgoing_links
+List all files a document links to via wikilinks.
+
+```
+get_outgoing_links(filepath)
+```
+
+#### find_broken_links
+Find wikilinks pointing to non-existent files. No parameters.
+
+#### find_orphan_files
+Find files with no incoming wikilinks. No parameters.
+
+### Batch
+
+#### batch_update_frontmatter
+Update a frontmatter field across files filtered by project, tag, or glob.
+
+```
+batch_update_frontmatter(filter_type, filter_value, field, value, operation?, confirm?)
+```
+
+- `filter_type`: "project", "tag", or "glob"
+- `operation`: "set" (default), "append", or "remove"
+- `confirm`: False returns preview, True applies changes
+
+#### batch_rename_tag
+Rename a tag across all files (frontmatter + inline #tags).
+
+```
+batch_rename_tag(old_tag, new_tag, confirm?)
+```
+
 ### Maintenance
 
 #### reindex_vault
-Re-indexes the vault. Use `full=true` after major changes.
+Re-indexes the vault. Use `full=true` after major changes or after upgrading to index wikilink data.
 
 ## Workflow
 
-1. **Search** with `search_vault` using a natural language query
-2. **Evaluate** results — scores >0.7 are strong, 0.5-0.7 moderate
-3. **Expand** context with `get_chunk_context` if a result is promising but incomplete
-4. **Read** full files with `get_file_contents` when you need the complete document
-5. **Write** using `create_or_update_file`, `append_content`, or `patch_content`
-6. **Synthesize** — combine findings into a clear answer for the user
+1. **Orient** with `get_vault_map` to understand vault structure
+2. **Search** with `search_vault` using a natural language query
+3. **Evaluate** results — scores >0.7 are strong, 0.5-0.7 moderate
+4. **Expand** context with `get_chunk_context` if a result is promising but incomplete
+5. **Navigate** with `get_backlinks`/`get_outgoing_links` to find related documents
+6. **Read** full files with `get_file_contents` when you need the complete document
+7. **Write** using `create_or_update_file`, `append_content`, or `patch_content`
+8. **Maintain** with `find_broken_links`, `find_orphan_files` to keep vault healthy
+9. **Batch** with `batch_update_frontmatter` or `batch_rename_tag` for bulk changes
 
 All write operations automatically reindex the modified file in Qdrant (best-effort).
 
@@ -132,6 +187,10 @@ All write operations automatically reindex the modified file in Qdrant (best-eff
 - Use `project` filter when you know which project the user is asking about
 - Use `simple_search` for exact keyword matches when semantic search returns low scores
 - Use `patch_content` with heading targeting to surgically edit specific sections
+- Use `get_vault_map` first to understand how the vault is organized
+- Use `get_frontmatter_schema` to discover available metadata fields for filtering
+- Use `get_backlinks` to understand how documents relate to each other
+- Batch operations always preview first (confirm=False) — review before applying
 - All file paths are relative to the vault root
 
 ## User query
