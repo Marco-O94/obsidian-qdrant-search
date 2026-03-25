@@ -259,3 +259,163 @@ class TestPatchFrontmatter:
         import frontmatter
         post = frontmatter.load(str(vault / "note1.md"))
         assert post.metadata["status"] == "draft"
+
+
+# ---------------------------------------------------------------------------
+# Vault Map
+# ---------------------------------------------------------------------------
+
+
+class TestGetVaultMap:
+    def test_basic_tree(self, vault):
+        tree = vault_ops.get_vault_map(max_depth=3)
+        assert tree["files"] >= 1
+        assert any(c["name"] == "subdir" for c in tree["children"])
+
+    def test_max_depth_zero(self, vault):
+        tree = vault_ops.get_vault_map(max_depth=0)
+        assert tree["children"] == []
+        assert tree["files"] >= 1
+
+    def test_hidden_dirs_excluded(self, vault):
+        (vault / ".obsidian").mkdir()
+        (vault / ".obsidian" / "config.json").write_text("{}")
+        tree = vault_ops.get_vault_map(max_depth=3)
+        child_names = [c["name"] for c in tree["children"]]
+        assert ".obsidian" not in child_names
+
+    def test_format_vault_tree(self, vault):
+        tree = vault_ops.get_vault_map(max_depth=2)
+        formatted = vault_ops.format_vault_tree(tree)
+        assert "subdir" in formatted
+        assert "files" in formatted
+
+
+# ---------------------------------------------------------------------------
+# Frontmatter Schema
+# ---------------------------------------------------------------------------
+
+
+class TestGetFrontmatterSchema:
+    def test_schema_fields(self, vault):
+        schema = vault_ops.get_frontmatter_schema()
+        field_names = [s["field"] for s in schema]
+        assert "tags" in field_names
+
+    def test_schema_counts(self, vault):
+        schema = vault_ops.get_frontmatter_schema()
+        tags_entry = next(s for s in schema if s["field"] == "tags")
+        assert tags_entry["count"] == 2  # both files have tags
+        assert tags_entry["type"] == "list"
+
+    def test_schema_examples(self, vault):
+        schema = vault_ops.get_frontmatter_schema()
+        tags_entry = next(s for s in schema if s["field"] == "tags")
+        assert len(tags_entry["examples"]) > 0
+
+    def test_empty_vault(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(vault_ops, "VAULT_PATH", tmp_path)
+        schema = vault_ops.get_frontmatter_schema()
+        assert schema == []
+
+    def test_varied_types(self, vault):
+        (vault / "typed.md").write_text(
+            "---\ncount: 42\nactive: true\nweight: 3.14\n---\n# Typed\n\nContent.\n"
+        )
+        schema = vault_ops.get_frontmatter_schema()
+        field_map = {s["field"]: s["type"] for s in schema}
+        assert field_map.get("count") == "int"
+        assert field_map.get("active") == "bool"
+        assert field_map.get("weight") == "float"
+
+
+# ---------------------------------------------------------------------------
+# Batch Operations
+# ---------------------------------------------------------------------------
+
+
+class TestBatchUpdateFrontmatter:
+    def test_preview_mode(self, vault, no_reindex):
+        result = vault_ops.batch_update_frontmatter(
+            filter_type="tag", filter_value="python",
+            field="status", value="active",
+            confirm=False,
+        )
+        assert result["preview"] is True
+        assert result["count"] == 2
+        assert not result["applied"]
+
+    def test_set_operation(self, vault, no_reindex):
+        result = vault_ops.batch_update_frontmatter(
+            filter_type="tag", filter_value="python",
+            field="status", value="active",
+            confirm=True,
+        )
+        assert result["applied"] is True
+        assert result["count"] == 2
+        import frontmatter
+        post = frontmatter.load(str(vault / "note1.md"))
+        assert post.metadata["status"] == "active"
+
+    def test_project_filter(self, vault, no_reindex):
+        result = vault_ops.batch_update_frontmatter(
+            filter_type="project", filter_value="subdir",
+            field="reviewed", value="true",
+            confirm=False,
+        )
+        assert result["count"] == 1
+        assert "subdir/note2.md" in result["affected_files"]
+
+    def test_invalid_filter(self, vault, no_reindex):
+        with pytest.raises(ValueError, match="Invalid filter_type"):
+            vault_ops.batch_update_frontmatter(
+                filter_type="invalid", filter_value="x",
+                field="f", value="v",
+            )
+
+    def test_no_matching_files(self, vault, no_reindex):
+        result = vault_ops.batch_update_frontmatter(
+            filter_type="tag", filter_value="nonexistent",
+            field="status", value="x",
+            confirm=False,
+        )
+        assert result["count"] == 0
+
+
+class TestBatchRenameTag:
+    def test_preview_mode(self, vault, no_reindex):
+        result = vault_ops.batch_rename_tag("python", "py", confirm=False)
+        assert result["preview"] is True
+        assert result["count"] == 2
+        assert result["frontmatter_changes"] == 2
+
+    def test_apply_rename(self, vault, no_reindex):
+        result = vault_ops.batch_rename_tag("python", "py", confirm=True)
+        assert result["applied"] is True
+        import frontmatter
+        post = frontmatter.load(str(vault / "note1.md"))
+        assert "py" in post.metadata["tags"]
+        assert "python" not in post.metadata["tags"]
+
+    def test_inline_tag_rename(self, vault, no_reindex):
+        (vault / "inline.md").write_text(
+            "---\ntags: []\n---\n# Inline\n\nSome text #python here.\n"
+        )
+        result = vault_ops.batch_rename_tag("python", "py", confirm=True)
+        content = (vault / "inline.md").read_text()
+        assert "#py" in content
+        assert "#python" not in content
+
+    def test_no_partial_match(self, vault, no_reindex):
+        (vault / "partial.md").write_text(
+            "---\ntags:\n  - python-3\n---\n# Partial\n\nContent.\n"
+        )
+        result = vault_ops.batch_rename_tag("python", "py", confirm=True)
+        import frontmatter
+        post = frontmatter.load(str(vault / "partial.md"))
+        # python-3 should NOT be renamed
+        assert "python-3" in post.metadata["tags"]
+
+    def test_nonexistent_tag(self, vault, no_reindex):
+        result = vault_ops.batch_rename_tag("nonexistent", "new", confirm=False)
+        assert result["count"] == 0
