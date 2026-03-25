@@ -1,15 +1,17 @@
 ---
-description: Search the Obsidian vault documentation using semantic search via Qdrant. Use when you need to find documentation by meaning rather than exact keywords.
+description: Search and manage the Obsidian vault using semantic search and CRUD operations via Qdrant MCP server.
 ---
 
-# Vault Semantic Search
+# Vault Search & Management
 
-You have access to the `obsidian-qdrant-search` MCP server which provides semantic search over the Obsidian vault. Use it to find relevant documentation even when the user's query doesn't match exact keywords.
+You have access to the `obsidian-qdrant-search` MCP server which provides semantic search and full CRUD operations over the Obsidian vault.
 
 ## Available MCP tools
 
-### search_vault
-Primary search tool. Always start here.
+### Search
+
+#### search_vault
+Primary semantic search. Always start here for finding documentation by meaning.
 
 ```
 search_vault(query, project?, doc_type?, tag?, top_k?)
@@ -21,37 +23,116 @@ search_vault(query, project?, doc_type?, tag?, top_k?)
 - `tag`: Filter by frontmatter tag (e.g. "kubernetes", "database", "security")
 - `top_k`: Number of results (default 5)
 
-### get_chunk_context
-Use after search_vault when a result is relevant but needs more context.
+#### simple_search
+Case-insensitive text search across all `.md` files. Use when you need exact keyword matches.
+
+```
+simple_search(query, context_length?)
+```
+
+#### get_chunk_context
+Expand context around a search result by fetching adjacent chunks.
 
 ```
 get_chunk_context(file_path, chunk_index, window?)
 ```
 
-- `file_path`: From search result (e.g. "core/02-modules/scripts-manager/api-contracts.md")
-- `chunk_index`: From search result
-- `window`: Chunks before/after (default 1)
+### Read
 
-### list_projects
-Lists all indexed projects with stats. Use to discover what's available.
+#### get_file_contents
+Read the raw content of any vault file.
 
-### reindex_vault
-Re-indexes the vault. Use `full=true` after major documentation changes.
+```
+get_file_contents(filepath)
+```
+
+#### get_file_metadata
+Get frontmatter, tags, and file stats (size, modified date).
+
+```
+get_file_metadata(filepath)
+```
+
+#### list_files_in_dir / list_files_in_vault
+List files and subdirectories. Use `list_files_in_vault` for root, `list_files_in_dir` for a specific directory.
+
+```
+list_files_in_dir(dirpath?)
+list_files_in_vault()
+```
+
+### Write
+
+#### create_or_update_file
+Create a new file or overwrite an existing one. Parent directories are created automatically.
+
+```
+create_or_update_file(filepath, content)
+```
+
+#### append_content
+Append content to a file (creates if missing).
+
+```
+append_content(filepath, content)
+```
+
+#### patch_content
+Targeted modification of a specific section by heading or frontmatter field.
+
+```
+patch_content(filepath, operation, target_type, target, content)
+```
+
+- `operation`: "append", "prepend", or "replace"
+- `target_type`: "heading" or "frontmatter"
+- `target`: Heading text (e.g. "Setup" or nested "Setup/Installation") or frontmatter field name
+
+#### delete_file
+Delete a file. Requires `confirm=True` as safety guard.
+
+```
+delete_file(filepath, confirm=True)
+```
+
+### Discover
+
+#### list_projects
+Lists all indexed projects with file and chunk counts.
+
+#### list_tags
+Lists all tags (frontmatter + inline) with occurrence counts.
+
+#### get_recent_changes
+Returns recently modified `.md` files sorted by date.
+
+```
+get_recent_changes(days?, limit?)
+```
+
+### Maintenance
+
+#### reindex_vault
+Re-indexes the vault. Use `full=true` after major changes.
 
 ## Workflow
 
-1. **Search** with `search_vault` using a natural language query derived from the user's question
-2. **Evaluate** results — check scores (>0.7 is strong, 0.5-0.7 is moderate)
+1. **Search** with `search_vault` using a natural language query
+2. **Evaluate** results — scores >0.7 are strong, 0.5-0.7 moderate
 3. **Expand** context with `get_chunk_context` if a result is promising but incomplete
-4. **Filter** — if too many results, narrow with `project`, `doc_type`, or `tag`
-5. **Synthesize** — combine findings into a clear answer for the user
+4. **Read** full files with `get_file_contents` when you need the complete document
+5. **Write** using `create_or_update_file`, `append_content`, or `patch_content`
+6. **Synthesize** — combine findings into a clear answer for the user
+
+All write operations automatically reindex the modified file in Qdrant (best-effort).
 
 ## Tips
 
 - Rephrase technical jargon into natural language for better semantic matches
 - Use `project` filter when you know which project the user is asking about
-- If scores are low, try a broader or differently worded query
-- Use `get_chunk_context` to see tables and code blocks that may have been in adjacent chunks
+- Use `simple_search` for exact keyword matches when semantic search returns low scores
+- Use `patch_content` with heading targeting to surgically edit specific sections
+- All file paths are relative to the vault root
 
 ## User query
 
