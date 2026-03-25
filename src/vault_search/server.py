@@ -17,7 +17,9 @@ mcp = FastMCP(
         "SEARCH: search_vault (semantic), simple_search (text), get_chunk_context (expand results). "
         "READ: get_file_contents, get_file_metadata, list_files_in_dir, list_files_in_vault. "
         "WRITE: create_or_update_file, append_content, patch_content (by heading/frontmatter), delete_file. "
-        "DISCOVER: list_projects, list_tags, get_recent_changes. "
+        "DISCOVER: list_projects, list_tags, get_recent_changes, get_vault_map, get_frontmatter_schema. "
+        "GRAPH: get_backlinks, get_outgoing_links, find_broken_links, find_orphan_files. "
+        "BATCH: batch_update_frontmatter, batch_rename_tag (preview with confirm=False, apply with confirm=True). "
         "MAINTENANCE: reindex_vault. "
         "Write operations auto-reindex the modified file in Qdrant."
     ),
@@ -496,6 +498,337 @@ def list_tags() -> str:
     for tag, count in tags.items():
         lines.append(f"- **{tag}**: {count}")
     return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Vault structure & schema discovery
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+def get_vault_map(max_depth: int = 3) -> str:
+    """Get the vault's directory structure as a tree with file counts per directory.
+
+    Args:
+        max_depth: Maximum directory depth to show (default 3). Use 0 for root only.
+
+    Returns:
+        Formatted tree showing directory hierarchy, file counts, and file types.
+    """
+    from vault_search import vault_ops
+
+    tree = vault_ops.get_vault_map(max_depth=max_depth)
+    return "# Vault Structure\n\n" + vault_ops.format_vault_tree(tree)
+
+
+@mcp.tool()
+def get_frontmatter_schema() -> str:
+    """Discover all frontmatter fields used across the vault with types and frequency.
+
+    Returns:
+        Table of frontmatter fields showing name, type, usage count, and example values.
+    """
+    from vault_search import vault_ops
+
+    schema = vault_ops.get_frontmatter_schema()
+    if not schema:
+        return "No frontmatter fields found in the vault."
+
+    total = schema[0]["total_files"] if schema else 0
+    lines = [f"# Frontmatter Schema ({total} files scanned)\n"]
+    lines.append("| Field | Type | Count | Examples |")
+    lines.append("|-------|------|-------|----------|")
+    for entry in schema:
+        examples = ", ".join(str(e) for e in entry["examples"][:3])
+        pct = round(entry["count"] / total * 100) if total else 0
+        lines.append(f"| `{entry['field']}` | {entry['type']} | {entry['count']} ({pct}%) | {examples} |")
+
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Wikilink graph
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+def get_backlinks(filepath: str) -> str:
+    """Find all files that contain wikilinks pointing to the given file.
+
+    Args:
+        filepath: Relative path to the target file (e.g. "projects/auth.md").
+
+    Returns:
+        List of files linking to this file.
+    """
+    from qdrant_client.models import FieldCondition, Filter, MatchValue
+
+    client = get_client()
+
+    files = set()
+    offset = None
+
+    while True:
+        results = client.scroll(
+            collection_name=COLLECTION_NAME,
+            scroll_filter=Filter(
+                must=[FieldCondition(key="links_to", match=MatchValue(value=filepath))]
+            ),
+            limit=100,
+            offset=offset,
+            with_payload=["file_path", "doc_title"],
+            with_vectors=False,
+        )
+        points, next_offset = results
+        for point in points:
+            fp = point.payload.get("file_path", "")
+            title = point.payload.get("doc_title", "")
+            if fp and fp != filepath:
+                files.add((fp, title))
+        if next_offset is None:
+            break
+        offset = next_offset
+
+    if not files:
+        return f"No backlinks found for `{filepath}`."
+
+    lines = [f"# Backlinks to `{filepath}`\n"]
+    for fp, title in sorted(files):
+        label = f"{title} (`{fp}`)" if title else f"`{fp}`"
+        lines.append(f"- {label}")
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def get_outgoing_links(filepath: str) -> str:
+    """List all files that the given file links to via wikilinks.
+
+    Args:
+        filepath: Relative path to the source file.
+
+    Returns:
+        List of outgoing link targets.
+    """
+    from qdrant_client.models import FieldCondition, Filter, MatchValue, Range
+
+    client = get_client()
+
+    results = client.scroll(
+        collection_name=COLLECTION_NAME,
+        scroll_filter=Filter(
+            must=[
+                FieldCondition(key="file_path", match=MatchValue(value=filepath)),
+                FieldCondition(key="chunk_index", range=Range(gte=0, lte=0)),
+            ]
+        ),
+        limit=1,
+        with_payload=["links_to", "links_to_raw"],
+        with_vectors=False,
+    )
+
+    points = results[0]
+    if not points:
+        return f"No indexed data found for `{filepath}`."
+
+    links = points[0].payload.get("links_to", [])
+    raw_links = points[0].payload.get("links_to_raw", [])
+
+    if not raw_links:
+        return f"`{filepath}` contains no wikilinks."
+
+    lines = [f"# Outgoing links from `{filepath}`\n"]
+    for raw, resolved in zip(raw_links, [None] * len(raw_links)):
+        # Match raw to resolved
+        pass
+
+    # Show resolved links
+    for link in links:
+        lines.append(f"- `{link}`")
+
+    # Show unresolved raw targets
+    unresolved = set(raw_links) - set(
+        t.split("#")[0].strip() for t in raw_links
+        if any(l.endswith(t + ".md") or l.endswith("/" + t.split("/")[-1] + ".md") or l == t for l in links)
+    )
+
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def find_broken_links() -> str:
+    """Find all wikilinks in the vault that point to non-existent files.
+
+    Returns:
+        List of broken links with source file and target.
+    """
+    from vault_search.config import VAULT_PATH as vault_path
+    from vault_search.indexer import find_markdown_files
+
+    # Scan filesystem directly for accuracy
+    md_files = find_markdown_files(vault_path)
+    all_stems = {f.stem: str(f.relative_to(vault_path)) for f in md_files}
+    all_paths = set(all_stems.values())
+
+    broken = []
+    wikilink_re = __import__("re").compile(r'\[\[([^\]|]+)(?:\|[^\]]+)?\]\]')
+
+    for md_file in md_files:
+        try:
+            content = md_file.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+
+        rel_path = str(md_file.relative_to(vault_path))
+        for match in wikilink_re.finditer(content):
+            target = match.group(1).split("#")[0].strip()
+            if not target:
+                continue
+
+            # Try to resolve
+            resolved = False
+            for candidate in [target, target + ".md"]:
+                if candidate in all_paths:
+                    resolved = True
+                    break
+            if not resolved:
+                stem = target.split("/")[-1]
+                if stem in all_stems:
+                    resolved = True
+            if not resolved:
+                broken.append({"source": rel_path, "target": target})
+
+    if not broken:
+        return "No broken wikilinks found."
+
+    lines = [f"# Broken Wikilinks ({len(broken)} found)\n"]
+    for b in broken:
+        lines.append(f"- `{b['source']}` -> `[[{b['target']}]]`")
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def find_orphan_files() -> str:
+    """Find files that have no incoming wikilinks from other files.
+
+    Returns:
+        List of files with zero backlinks.
+    """
+    from vault_search.config import VAULT_PATH as vault_path
+    from vault_search.indexer import find_markdown_files, extract_wikilinks, resolve_wikilink_target
+
+    md_files = find_markdown_files(vault_path)
+    all_file_paths = set()
+    linked_to = set()
+
+    for md_file in md_files:
+        rel = str(md_file.relative_to(vault_path))
+        all_file_paths.add(rel)
+
+        try:
+            content = md_file.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+
+        for target in extract_wikilinks(content):
+            resolved = resolve_wikilink_target(target, vault_path)
+            if resolved:
+                linked_to.add(resolved)
+
+    orphans = sorted(all_file_paths - linked_to)
+
+    if not orphans:
+        return "No orphan files found — every file has at least one incoming link."
+
+    lines = [f"# Orphan Files ({len(orphans)} found)\n"]
+    for f in orphans:
+        lines.append(f"- `{f}`")
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Batch operations
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+def batch_update_frontmatter(
+    filter_type: str,
+    filter_value: str,
+    field: str,
+    value: str,
+    operation: str = "set",
+    confirm: bool = False,
+) -> str:
+    """Update a frontmatter field across multiple files matching a filter.
+
+    Args:
+        filter_type: "project" (by project name), "tag" (by tag), or "glob" (by file pattern like "projects/**/*.md").
+        filter_value: Filter value.
+        field: Frontmatter field to update.
+        value: Value to set, append, or remove (YAML parsed).
+        operation: "set" (replace), "append" (add to list), "remove" (remove from list).
+        confirm: Set to True to apply changes. Default False returns a preview.
+
+    Returns:
+        Preview or confirmation of changes applied.
+    """
+    from vault_search import vault_ops
+
+    try:
+        result = vault_ops.batch_update_frontmatter(
+            filter_type=filter_type,
+            filter_value=filter_value,
+            field=field,
+            value=value,
+            operation=operation,
+            confirm=confirm,
+        )
+        if result["preview"]:
+            lines = [f"# Preview: batch update frontmatter\n"]
+            lines.append(f"**Filter**: {filter_type} = `{filter_value}`")
+            lines.append(f"**Operation**: {operation} `{field}` = `{value}`")
+            lines.append(f"**Affected files**: {result['count']}\n")
+            for f in result["affected_files"]:
+                lines.append(f"- `{f}`")
+            lines.append(f"\nSet `confirm=True` to apply.")
+            return "\n".join(lines)
+        return f"Applied `{operation}` on `{field}` to {result['count']} files."
+    except ValueError as e:
+        return f"Error: {e}"
+
+
+@mcp.tool()
+def batch_rename_tag(
+    old_tag: str,
+    new_tag: str,
+    confirm: bool = False,
+) -> str:
+    """Rename a tag across all vault files (both frontmatter and inline #tags).
+
+    Args:
+        old_tag: The tag to rename (without # prefix).
+        new_tag: The new tag name (without # prefix).
+        confirm: Set to True to apply. Default False returns a preview of affected files.
+
+    Returns:
+        Preview or confirmation of tag rename.
+    """
+    from vault_search import vault_ops
+
+    try:
+        result = vault_ops.batch_rename_tag(old_tag=old_tag, new_tag=new_tag, confirm=confirm)
+        if result["preview"]:
+            lines = [f"# Preview: rename tag `{old_tag}` -> `{new_tag}`\n"]
+            lines.append(f"**Affected files**: {result['count']}")
+            lines.append(f"**Frontmatter changes**: {result['frontmatter_changes']}")
+            lines.append(f"**Inline changes**: {result['inline_changes']}\n")
+            for f in result["affected_files"]:
+                lines.append(f"- `{f}`")
+            lines.append(f"\nSet `confirm=True` to apply.")
+            return "\n".join(lines)
+        return f"Renamed tag `{old_tag}` -> `{new_tag}` in {result['count']} files ({result['frontmatter_changes']} frontmatter, {result['inline_changes']} inline)."
+    except ValueError as e:
+        return f"Error: {e}"
 
 
 def main():

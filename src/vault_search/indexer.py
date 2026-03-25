@@ -54,6 +54,8 @@ def ensure_collection(client: QdrantClient) -> None:
         client.create_payload_index(COLLECTION_NAME, "status", PayloadSchemaType.KEYWORD)
         client.create_payload_index(COLLECTION_NAME, "tags", PayloadSchemaType.KEYWORD)
         client.create_payload_index(COLLECTION_NAME, "chunk_index", PayloadSchemaType.INTEGER)
+        client.create_payload_index(COLLECTION_NAME, "links_to", PayloadSchemaType.KEYWORD)
+        client.create_payload_index(COLLECTION_NAME, "file_path", PayloadSchemaType.KEYWORD)
 
 
 def find_markdown_files(vault_path: Path) -> list[Path]:
@@ -63,6 +65,59 @@ def find_markdown_files(vault_path: Path) -> list[Path]:
 
 def file_hash(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+WIKILINK_RE = re.compile(r'\[\[([^\]|]+)(?:\|[^\]]+)?\]\]')
+
+# Cache for wikilink target resolution (filename -> relative path)
+_wikilink_cache: dict[str, str | None] = {}
+
+
+def extract_wikilinks(body: str) -> list[str]:
+    """Extract all wikilink targets from markdown body before resolving.
+
+    Returns:
+        Deduplicated list of raw wikilink targets.
+    """
+    return list(dict.fromkeys(WIKILINK_RE.findall(body)))
+
+
+def resolve_wikilink_target(target: str, vault_path: Path) -> str | None:
+    """Resolve a wikilink target to a relative file path.
+
+    Handles: simple names ("my-note"), paths ("folder/my-note"),
+    with or without .md extension, heading anchors ("note#heading").
+
+    Returns:
+        Relative path string or None if not found.
+    """
+    # Strip heading anchors
+    target = target.split("#")[0].strip()
+    if not target:
+        return None
+
+    if target in _wikilink_cache:
+        return _wikilink_cache[target]
+
+    vault = vault_path.resolve()
+
+    # Try direct path (with and without .md)
+    for candidate in [vault / target, vault / (target + ".md")]:
+        if candidate.is_file():
+            result = str(candidate.relative_to(vault))
+            _wikilink_cache[target] = result
+            return result
+
+    # Filename-based search (last segment)
+    stem = target.split("/")[-1]
+    for md_file in vault.rglob("*.md"):
+        if md_file.stem == stem:
+            result = str(md_file.relative_to(vault))
+            _wikilink_cache[target] = result
+            return result
+
+    _wikilink_cache[target] = None
+    return None
 
 
 def resolve_wikilinks(text: str) -> str:
@@ -386,6 +441,15 @@ def index_single_file(rel_path: str) -> dict:
 
     doc_title = extract_doc_title(body)
     project = extract_project_name(abs_path, vault_path)
+
+    # Extract wikilinks before resolving
+    raw_links = extract_wikilinks(body)
+    resolved_links = []
+    for target in raw_links:
+        resolved = resolve_wikilink_target(target, vault_path)
+        if resolved:
+            resolved_links.append(resolved)
+
     chunks = chunk_document(body)
     fhash = file_hash(abs_path)
     now = datetime.now(timezone.utc).isoformat()
@@ -412,6 +476,8 @@ def index_single_file(rel_path: str) -> dict:
                 "chunk_content": chunk["content"],
                 "file_hash": fhash,
                 "indexed_at": now,
+                "links_to": resolved_links,
+                "links_to_raw": raw_links,
             },
         ))
 
@@ -477,6 +543,15 @@ def index_vault(full: bool = False) -> dict:
 
         doc_title = extract_doc_title(body)
         project = extract_project_name(md_file, vault_path)
+
+        # Extract wikilinks before resolving
+        raw_links = extract_wikilinks(body)
+        resolved_links = []
+        for target in raw_links:
+            resolved = resolve_wikilink_target(target, vault_path)
+            if resolved:
+                resolved_links.append(resolved)
+
         chunks = chunk_document(body)
 
         now = datetime.now(timezone.utc).isoformat()
@@ -504,6 +579,8 @@ def index_vault(full: bool = False) -> dict:
                     "chunk_content": chunk["content"],
                     "file_hash": fhash,
                     "indexed_at": now,
+                    "links_to": resolved_links,
+                    "links_to_raw": raw_links,
                 },
             )
             points_batch.append(point)

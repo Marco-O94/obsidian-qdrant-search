@@ -478,6 +478,363 @@ def _patch_frontmatter(abs_path: Path, operation: str, target: str, content: str
 
 
 # ---------------------------------------------------------------------------
+# Vault map
+# ---------------------------------------------------------------------------
+
+
+def get_vault_map(max_depth: int = 3) -> dict:
+    """Build a tree representation of the vault directory structure.
+
+    Args:
+        max_depth: Maximum directory depth to traverse (default 3). 0 = root only.
+
+    Returns:
+        Nested dict with: name, path, files (count), extensions (set), children (list).
+    """
+    vault = VAULT_PATH.resolve()
+
+    def _build_tree(dirpath: Path, current_depth: int) -> dict:
+        name = dirpath.name or "/"
+        rel = relative_to_vault(VAULT_PATH, dirpath) if dirpath != vault else ""
+
+        files = []
+        children = []
+
+        try:
+            entries = sorted(dirpath.iterdir())
+        except PermissionError:
+            entries = []
+
+        for entry in entries:
+            if entry.name.startswith("."):
+                continue
+            if entry.is_file():
+                files.append(entry.name)
+            elif entry.is_dir() and current_depth < max_depth:
+                children.append(_build_tree(entry, current_depth + 1))
+
+        extensions = list(set(Path(f).suffix for f in files if Path(f).suffix))
+
+        return {
+            "name": name,
+            "path": rel,
+            "files": len(files),
+            "extensions": extensions,
+            "children": children,
+        }
+
+    return _build_tree(vault, 0)
+
+
+def format_vault_tree(tree: dict, indent: int = 0) -> str:
+    """Format a vault map tree as a readable markdown string.
+
+    Args:
+        tree: Tree dict from get_vault_map.
+        indent: Current indentation level.
+
+    Returns:
+        Formatted tree string.
+    """
+    prefix = "  " * indent
+    name = tree["name"] + "/" if tree["children"] or indent == 0 else tree["name"]
+    ext_info = ", ".join(sorted(tree["extensions"])) if tree["extensions"] else ""
+    file_info = f"{tree['files']} files" if tree["files"] else "empty"
+    if ext_info:
+        file_info += f" ({ext_info})"
+
+    lines = [f"{prefix}{name} — {file_info}"]
+    for child in tree["children"]:
+        lines.append(format_vault_tree(child, indent + 1))
+
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Frontmatter schema discovery
+# ---------------------------------------------------------------------------
+
+
+def get_frontmatter_schema() -> list[dict]:
+    """Scan all .md files and report frontmatter field usage.
+
+    Returns:
+        List of dicts sorted by frequency, each with:
+        field, type, count, total_files, examples (up to 3).
+    """
+    vault = VAULT_PATH.resolve()
+    field_stats: dict[str, dict] = {}
+    total_files = 0
+
+    for md_file in sorted(vault.rglob("*.md")):
+        try:
+            post = frontmatter.load(str(md_file))
+        except Exception:
+            continue
+        total_files += 1
+
+        for key, value in post.metadata.items():
+            if key not in field_stats:
+                field_stats[key] = {"types": [], "count": 0, "examples": []}
+
+            field_stats[key]["count"] += 1
+            field_stats[key]["types"].append(_detect_type(value))
+
+            if len(field_stats[key]["examples"]) < 3:
+                example = str(value)
+                if len(example) > 50:
+                    example = example[:50] + "..."
+                if example not in field_stats[key]["examples"]:
+                    field_stats[key]["examples"].append(example)
+
+    result = []
+    for field, stats in field_stats.items():
+        # Most common type
+        type_counts: dict[str, int] = {}
+        for t in stats["types"]:
+            type_counts[t] = type_counts.get(t, 0) + 1
+        most_common_type = max(type_counts, key=type_counts.get) if type_counts else "str"
+
+        result.append({
+            "field": field,
+            "type": most_common_type,
+            "count": stats["count"],
+            "total_files": total_files,
+            "examples": stats["examples"],
+        })
+
+    result.sort(key=lambda x: x["count"], reverse=True)
+    return result
+
+
+def _detect_type(value) -> str:
+    """Detect the type of a frontmatter value."""
+    if isinstance(value, bool):
+        return "bool"
+    if isinstance(value, int):
+        return "int"
+    if isinstance(value, float):
+        return "float"
+    if isinstance(value, list):
+        return "list"
+    if isinstance(value, dict):
+        return "dict"
+    if hasattr(value, "isoformat"):
+        return "date"
+    return "str"
+
+
+# ---------------------------------------------------------------------------
+# Batch operations
+# ---------------------------------------------------------------------------
+
+
+def batch_update_frontmatter(
+    filter_type: str,
+    filter_value: str,
+    field: str,
+    value: str,
+    operation: str = "set",
+    confirm: bool = False,
+) -> dict:
+    """Update a frontmatter field across multiple files matching a filter.
+
+    Args:
+        filter_type: "project", "tag", or "glob".
+        filter_value: Project name, tag name, or glob pattern.
+        field: Frontmatter field to modify.
+        value: Value to set/append/remove (parsed as YAML).
+        operation: "set", "append", or "remove".
+        confirm: If False, return preview. If True, apply changes.
+
+    Returns:
+        Dict with affected_files, count, preview, applied.
+    """
+    if filter_type not in ("project", "tag", "glob"):
+        raise ValueError(f"Invalid filter_type: {filter_type}. Must be 'project', 'tag', or 'glob'.")
+    if operation not in ("set", "append", "remove"):
+        raise ValueError(f"Invalid operation: {operation}. Must be 'set', 'append', or 'remove'.")
+
+    try:
+        parsed_value = yaml.safe_load(value)
+    except yaml.YAMLError:
+        parsed_value = value
+
+    vault = VAULT_PATH.resolve()
+    matching_files = _find_matching_files(vault, filter_type, filter_value)
+
+    affected = []
+    for md_file in matching_files:
+        rel = relative_to_vault(VAULT_PATH, md_file)
+        affected.append(rel)
+
+    if not confirm:
+        return {
+            "affected_files": affected,
+            "count": len(affected),
+            "preview": True,
+            "applied": False,
+        }
+
+    # Apply changes
+    for md_file in matching_files:
+        post = frontmatter.load(str(md_file))
+
+        if operation == "set":
+            post.metadata[field] = parsed_value
+        elif operation == "append":
+            current = post.metadata.get(field)
+            if isinstance(current, list):
+                current.append(parsed_value)
+            elif current is None:
+                post.metadata[field] = [parsed_value] if not isinstance(parsed_value, list) else parsed_value
+            else:
+                post.metadata[field] = [current, parsed_value]
+        elif operation == "remove":
+            current = post.metadata.get(field)
+            if isinstance(current, list) and parsed_value in current:
+                current.remove(parsed_value)
+            elif current == parsed_value:
+                del post.metadata[field]
+
+        md_file.write_text(frontmatter.dumps(post), encoding="utf-8")
+        _trigger_reindex(relative_to_vault(VAULT_PATH, md_file))
+
+    return {
+        "affected_files": affected,
+        "count": len(affected),
+        "preview": False,
+        "applied": True,
+    }
+
+
+def batch_rename_tag(
+    old_tag: str,
+    new_tag: str,
+    confirm: bool = False,
+) -> dict:
+    """Rename a tag across all vault files (frontmatter and inline).
+
+    Args:
+        old_tag: Tag to find (without # prefix).
+        new_tag: Replacement tag (without # prefix).
+        confirm: If False, preview only. If True, apply.
+
+    Returns:
+        Dict with affected_files, count, frontmatter_changes, inline_changes, preview, applied.
+    """
+    vault = VAULT_PATH.resolve()
+    affected = []
+    fm_changes = 0
+    inline_changes = 0
+    inline_pattern = re.compile(r'(?<=\s)#' + re.escape(old_tag) + r'(?=\s|$)')
+
+    for md_file in sorted(vault.rglob("*.md")):
+        try:
+            post = frontmatter.load(str(md_file))
+        except Exception:
+            continue
+
+        file_changed = False
+        tags = post.metadata.get("tags", [])
+        if isinstance(tags, str):
+            tags = [tags]
+            post.metadata["tags"] = tags
+
+        # Check frontmatter
+        if old_tag in tags:
+            file_changed = True
+            fm_changes += 1
+
+        # Check inline
+        inline_count = len(inline_pattern.findall(post.content))
+        if inline_count > 0:
+            file_changed = True
+            inline_changes += inline_count
+
+        if file_changed:
+            affected.append(relative_to_vault(VAULT_PATH, md_file))
+
+    if not confirm:
+        return {
+            "affected_files": affected,
+            "count": len(affected),
+            "frontmatter_changes": fm_changes,
+            "inline_changes": inline_changes,
+            "preview": True,
+            "applied": False,
+        }
+
+    # Apply changes
+    for md_file in sorted(vault.rglob("*.md")):
+        try:
+            post = frontmatter.load(str(md_file))
+        except Exception:
+            continue
+
+        changed = False
+        tags = post.metadata.get("tags", [])
+        if isinstance(tags, str):
+            tags = [tags]
+            post.metadata["tags"] = tags
+
+        if old_tag in tags:
+            idx = tags.index(old_tag)
+            tags[idx] = new_tag
+            changed = True
+
+        new_content, count = inline_pattern.subn(f"#{new_tag}", post.content)
+        if count > 0:
+            post.content = new_content
+            changed = True
+
+        if changed:
+            md_file.write_text(frontmatter.dumps(post), encoding="utf-8")
+            _trigger_reindex(relative_to_vault(VAULT_PATH, md_file))
+
+    return {
+        "affected_files": affected,
+        "count": len(affected),
+        "frontmatter_changes": fm_changes,
+        "inline_changes": inline_changes,
+        "preview": False,
+        "applied": True,
+    }
+
+
+def _find_matching_files(vault: Path, filter_type: str, filter_value: str) -> list[Path]:
+    """Find files matching a filter criterion."""
+    matching = []
+
+    if filter_type == "glob":
+        for path in sorted(vault.glob(filter_value)):
+            if path.is_file() and path.suffix == ".md":
+                matching.append(path)
+    else:
+        for md_file in sorted(vault.rglob("*.md")):
+            if filter_type == "project":
+                try:
+                    rel = md_file.relative_to(vault)
+                    project = rel.parts[0] if rel.parts else ""
+                except ValueError:
+                    continue
+                if project == filter_value:
+                    matching.append(md_file)
+            elif filter_type == "tag":
+                try:
+                    post = frontmatter.load(str(md_file))
+                    tags = post.metadata.get("tags", [])
+                    if isinstance(tags, str):
+                        tags = [tags]
+                    if filter_value in tags:
+                        matching.append(md_file)
+                except Exception:
+                    continue
+
+    return matching
+
+
+# ---------------------------------------------------------------------------
 # Auto-reindex helper
 # ---------------------------------------------------------------------------
 
