@@ -355,6 +355,72 @@ def delete_file_points(client: QdrantClient, file_path: str) -> None:
     )
 
 
+def index_single_file(rel_path: str) -> dict:
+    """Reindex a single file after modification.
+
+    Args:
+        rel_path: File path relative to vault root.
+
+    Returns:
+        Dict with file and chunks_indexed count.
+    """
+    client = get_client()
+    model = get_model()
+    ensure_collection(client)
+
+    vault_path = VAULT_PATH
+    abs_path = vault_path / rel_path
+
+    # Delete old points for this file
+    delete_file_points(client, rel_path)
+
+    if not abs_path.is_file():
+        return {"file": rel_path, "chunks_indexed": 0}
+
+    post = frontmatter.load(str(abs_path))
+    metadata = post.metadata
+    body = post.content
+
+    if not body.strip():
+        return {"file": rel_path, "chunks_indexed": 0}
+
+    doc_title = extract_doc_title(body)
+    project = extract_project_name(abs_path, vault_path)
+    chunks = chunk_document(body)
+    fhash = file_hash(abs_path)
+    now = datetime.now(timezone.utc).isoformat()
+
+    chunk_texts = [chunk["content"] for chunk in chunks]
+    embeddings = [v.tolist() for v in model.embed(chunk_texts)] if chunk_texts else []
+
+    points = []
+    for i, (chunk, embedding) in enumerate(zip(chunks, embeddings)):
+        point_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"{rel_path}:{i}"))
+        points.append(PointStruct(
+            id=point_id,
+            vector=embedding,
+            payload={
+                "file_path": rel_path,
+                "project": project,
+                "doc_title": doc_title,
+                "scope": metadata.get("scope", ""),
+                "type": metadata.get("type", ""),
+                "status": metadata.get("status", ""),
+                "tags": metadata.get("tags", []),
+                "chunk_index": i,
+                "chunk_heading": chunk["heading"],
+                "chunk_content": chunk["content"],
+                "file_hash": fhash,
+                "indexed_at": now,
+            },
+        ))
+
+    if points:
+        client.upsert(collection_name=COLLECTION_NAME, points=points)
+
+    return {"file": rel_path, "chunks_indexed": len(points)}
+
+
 def index_vault(full: bool = False) -> dict:
     """Index the vault into Qdrant.
 

@@ -11,12 +11,15 @@ from vault_search.config import (
 )
 
 mcp = FastMCP(
-    "vault-search",
+    "obsidian-qdrant-search",
     instructions=(
-        "Semantic search over the Obsidian vault documentation. "
-        "Use search_vault to find relevant documentation by natural language query. "
-        "Use list_projects to see what's indexed. "
-        "Use reindex_vault to update the index after documentation changes."
+        "Full-featured Obsidian vault management with semantic search. "
+        "SEARCH: search_vault (semantic), simple_search (text), get_chunk_context (expand results). "
+        "READ: get_file_contents, get_file_metadata, list_files_in_dir, list_files_in_vault. "
+        "WRITE: create_or_update_file, append_content, patch_content (by heading/frontmatter), delete_file. "
+        "DISCOVER: list_projects, list_tags, get_recent_changes. "
+        "MAINTENANCE: reindex_vault. "
+        "Write operations auto-reindex the modified file in Qdrant."
     ),
 )
 
@@ -245,6 +248,254 @@ def reindex_vault(full: bool = False) -> str:
         f"- **Total files in vault**: {report['total_files']}\n"
         f"- **Time**: {report['elapsed_seconds']}s\n"
     )
+
+
+# ---------------------------------------------------------------------------
+# Vault file operations (CRUD)
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+def get_file_contents(filepath: str) -> str:
+    """Read the content of a file in the Obsidian vault.
+
+    Args:
+        filepath: Path relative to vault root (e.g. "notes/daily.md")
+
+    Returns:
+        The raw file content.
+    """
+    from vault_search import vault_ops
+
+    try:
+        return vault_ops.get_file_contents(filepath)
+    except (FileNotFoundError, ValueError) as e:
+        return f"Error: {e}"
+
+
+@mcp.tool()
+def get_file_metadata(filepath: str) -> str:
+    """Get frontmatter metadata and file stats for a vault file.
+
+    Args:
+        filepath: Path relative to vault root.
+
+    Returns:
+        Formatted metadata including frontmatter fields, tags, and file stats.
+    """
+    from vault_search import vault_ops
+
+    try:
+        meta = vault_ops.get_file_metadata(filepath)
+        lines = [f"# Metadata: {meta['path']}\n"]
+        lines.append(f"**Size**: {meta['stat']['size']} bytes")
+        lines.append(f"**Modified**: {meta['stat']['modified']}")
+        lines.append(f"**Created**: {meta['stat']['created']}")
+        if meta["tags"]:
+            lines.append(f"**Tags**: {', '.join(meta['tags'])}")
+        if meta["frontmatter"]:
+            lines.append("\n## Frontmatter\n")
+            for key, value in meta["frontmatter"].items():
+                lines.append(f"- **{key}**: {value}")
+        return "\n".join(lines)
+    except (FileNotFoundError, ValueError) as e:
+        return f"Error: {e}"
+
+
+@mcp.tool()
+def create_or_update_file(filepath: str, content: str) -> str:
+    """Create a new file or overwrite an existing file in the vault.
+
+    Args:
+        filepath: Path relative to vault root (e.g. "projects/new-note.md"). Parent directories are created automatically.
+        content: Full file content to write.
+
+    Returns:
+        Confirmation with file path and whether it was created or updated.
+    """
+    from vault_search import vault_ops
+
+    try:
+        result = vault_ops.create_or_update_file(filepath, content)
+        action = "Created" if result["created"] else "Updated"
+        return f"{action} `{result['path']}` ({result['size']} bytes)"
+    except ValueError as e:
+        return f"Error: {e}"
+
+
+@mcp.tool()
+def append_content(filepath: str, content: str) -> str:
+    """Append content to the end of a vault file (creates the file if it doesn't exist).
+
+    Args:
+        filepath: Path relative to vault root.
+        content: Content to append.
+
+    Returns:
+        Confirmation with bytes appended.
+    """
+    from vault_search import vault_ops
+
+    try:
+        result = vault_ops.append_content(filepath, content)
+        return f"Appended {result['appended_bytes']} bytes to `{result['path']}`"
+    except ValueError as e:
+        return f"Error: {e}"
+
+
+@mcp.tool()
+def patch_content(
+    filepath: str,
+    operation: str,
+    target_type: str,
+    target: str,
+    content: str,
+) -> str:
+    """Apply a targeted modification to a specific section of a vault file.
+
+    Args:
+        filepath: Path relative to vault root.
+        operation: "append" (add after section), "prepend" (add before section content), or "replace" (replace section content).
+        target_type: "heading" (target a markdown heading) or "frontmatter" (target a frontmatter field).
+        target: For headings: the heading text (e.g. "Setup") or nested path (e.g. "Setup/Installation"). For frontmatter: the field name.
+        content: Content to insert or replace with.
+
+    Returns:
+        Confirmation of the patch operation.
+    """
+    from vault_search import vault_ops
+
+    try:
+        result = vault_ops.patch_content(filepath, operation, target_type, target, content)
+        return f"Patched `{result['path']}`: {result['operation']} on {result['target_type']} '{result['target']}'"
+    except (FileNotFoundError, ValueError) as e:
+        return f"Error: {e}"
+
+
+@mcp.tool()
+def delete_file(filepath: str, confirm: bool = False) -> str:
+    """Delete a file from the vault.
+
+    Args:
+        filepath: Path relative to vault root.
+        confirm: Must be True to actually delete. Safety guard to prevent accidental deletion.
+
+    Returns:
+        Confirmation of deletion.
+    """
+    from vault_search import vault_ops
+
+    try:
+        result = vault_ops.delete_file(filepath, confirm=confirm)
+        return f"Deleted `{result['path']}`"
+    except (FileNotFoundError, ValueError) as e:
+        return f"Error: {e}"
+
+
+@mcp.tool()
+def list_files_in_dir(dirpath: str = "") -> str:
+    """List files and subdirectories in a vault directory.
+
+    Args:
+        dirpath: Relative directory path. Empty string or omit for vault root.
+
+    Returns:
+        Formatted list of files and directories.
+    """
+    from vault_search import vault_ops
+
+    try:
+        entries = vault_ops.list_files_in_dir(dirpath)
+        if not entries:
+            return f"Directory `{dirpath or '/'}` is empty."
+        header = f"# Contents of `{dirpath or '/'}`\n"
+        return header + "\n".join(f"- {e}" for e in entries)
+    except (NotADirectoryError, ValueError) as e:
+        return f"Error: {e}"
+
+
+@mcp.tool()
+def list_files_in_vault() -> str:
+    """List all top-level files and directories in the vault root.
+
+    Returns:
+        Formatted list of root-level entries.
+    """
+    from vault_search import vault_ops
+
+    try:
+        entries = vault_ops.list_files_in_vault()
+        if not entries:
+            return "Vault is empty."
+        return "# Vault Root\n\n" + "\n".join(f"- {e}" for e in entries)
+    except ValueError as e:
+        return f"Error: {e}"
+
+
+@mcp.tool()
+def simple_search(query: str, context_length: int = 100) -> str:
+    """Search for text across all markdown files in the vault (case-insensitive).
+
+    Args:
+        query: Text to search for.
+        context_length: Characters of context around each match (default 100).
+
+    Returns:
+        Formatted search results with file paths and context snippets.
+    """
+    from vault_search import vault_ops
+
+    results = vault_ops.simple_search(query, context_length=context_length)
+    if not results:
+        return f"No matches found for: \"{query}\""
+
+    parts = [f"Found {len(results)} matches for: \"{query}\"\n"]
+    for r in results:
+        parts.append(f"### {r['filepath']}\n```\n...{r['context']}...\n```\n")
+
+    return "\n".join(parts)
+
+
+@mcp.tool()
+def get_recent_changes(days: int = 14, limit: int = 10) -> str:
+    """Get recently modified files in the vault.
+
+    Args:
+        days: Only include files modified within this many days (default 14).
+        limit: Maximum number of results (default 10).
+
+    Returns:
+        List of recently changed files with modification dates and sizes.
+    """
+    from vault_search import vault_ops
+
+    results = vault_ops.get_recent_changes(days=days, limit=limit)
+    if not results:
+        return f"No files modified in the last {days} days."
+
+    lines = [f"# Recent Changes (last {days} days)\n"]
+    for r in results:
+        lines.append(f"- `{r['filepath']}` — {r['modified']} ({r['size']} bytes)")
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def list_tags() -> str:
+    """List all tags used across the vault with occurrence counts.
+
+    Returns:
+        Tags sorted by frequency, from both frontmatter and inline #tags.
+    """
+    from vault_search import vault_ops
+
+    tags = vault_ops.list_tags()
+    if not tags:
+        return "No tags found in the vault."
+
+    lines = ["# Vault Tags\n"]
+    for tag, count in tags.items():
+        lines.append(f"- **{tag}**: {count}")
+    return "\n".join(lines)
 
 
 def main():
