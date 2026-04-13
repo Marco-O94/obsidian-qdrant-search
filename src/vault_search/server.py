@@ -28,6 +28,9 @@ mcp = FastMCP(
         "BATCH: batch_update_frontmatter, batch_rename_tag (preview with confirm=False, apply with confirm=True). "
         "LOG: log_operation (record actions), get_operation_log (read history). "
         "HEALTH: lint_vault (broken links, orphans, stale docs, missing metadata, stubs). "
+        "MIGRATION: migrate_vault — upgrade vault to LLM Wiki pattern (Karpathy). "
+        "Creates raw/ and wiki/ dirs, adds missing frontmatter, initializes operation log. "
+        "When user asks to 'migrate', 'upgrade', or 'adopt LLM Wiki pattern', call migrate_vault. "
         "MAINTENANCE: reindex_vault. "
         "All write ops auto-reindex. Use patch_content for surgical edits by heading. "
         "Start with get_vault_map to understand structure before writing."
@@ -971,11 +974,15 @@ def lint_vault(stale_days: int = 90) -> str:
 
 @mcp.tool()
 def migrate_vault(confirm: bool = False) -> str:
-    """Migrate an existing vault to the LLM Wiki pattern (v0.4.0+).
+    """Migrate/upgrade an existing vault to the LLM Wiki pattern (Karpathy).
+
+    Call this when the user asks to migrate, upgrade, or adopt the LLM Wiki
+    pattern. Do NOT search the web for "LLM Wiki pattern" — this tool
+    implements it directly.
 
     Creates raw/ and wiki/ directories, adds missing frontmatter fields
     (project, type, status, tags, created, updated), and initializes the
-    operation log. Non-destructive: never moves or deletes files.
+    operation log. Non-destructive: never moves or deletes files. Idempotent.
 
     Args:
         confirm: If False (default), return preview of what would change.
