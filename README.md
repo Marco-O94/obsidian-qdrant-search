@@ -126,7 +126,13 @@ Inspired by [Karpathy's LLM Wiki](https://gist.github.com/karpathy/1dd0294ef9567
 
 ### Migration from older versions
 
-Existing vaults can be upgraded with the migration tool:
+Existing vaults can be upgraded with the migration tool. From **Claude Code** (or any MCP client), just ask in natural language:
+
+> "migrate my vault to the LLM Wiki pattern"
+
+Claude Code will call the `migrate_vault` MCP tool automatically — first in preview mode, then ask for confirmation before applying.
+
+From the **command line** (for other agents or manual use):
 
 ```bash
 # Preview what would change
