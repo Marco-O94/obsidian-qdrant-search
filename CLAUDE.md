@@ -141,7 +141,7 @@ src/vault_search/
 ### Maintenance
 
 - `reindex_vault(full=False)` -- reindex vault (incremental by default)
-- `migrate_vault(confirm=False)` -- migrate existing vault to LLM Wiki pattern. Creates raw/ and wiki/ dirs, adds missing frontmatter, initializes operation log. Preview first, then `confirm=True` to apply. Idempotent.
+- `migrate_vault(confirm=False, mode="assisted")` -- migrate existing vault to LLM Wiki pattern. Two modes: `"assisted"` (default) classifies and moves files to raw/wiki dirs, updates wikilinks, adds frontmatter; `"manual"` creates empty dirs and adds frontmatter without moving files. Preview first, then `confirm=True` to apply. Idempotent.
 
 ## Tips for Agents
 

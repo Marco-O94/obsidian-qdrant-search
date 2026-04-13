@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.2] - 2026-04-13
+
+### Added
+
+- **Assisted migration mode**: `migrate_vault(mode="assisted")` (now the default) classifies files as raw/wiki/unknown using heuristics, moves them to the correct directories, preserves subdirectory structure, updates wikilinks after moves, and adds missing frontmatter — all in one step. Files classified as "unknown" are left in place for manual review
+- **Manual migration mode**: `migrate_vault(mode="manual")` retains the previous behavior — creates empty dirs and adds frontmatter without moving files
+- **138 tests** (was 120), including tests for assisted migration, collision guards, wikilink updates, and prefix-safety
+
+### Fixed
+
+- **Migration safety**: destination collision guard prevents silent file overwrite during assisted moves
+- **Wikilink updates**: rewrote `_update_wikilinks_after_moves` using regex to prevent prefix-collision bugs (e.g. `notes/abc` no longer incorrectly matches `notes/abcdef`)
+- **Directory cleanup**: scoped to only directories vacated by file moves, preserving intentionally empty directories
+- **Classification**: narrowed exception handling in `_classify_file` to expected error types with debug logging
+
 ## [0.4.1] - 2026-04-13
 
 ### Fixed

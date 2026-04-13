@@ -78,10 +78,11 @@ uv run vault-search-migrate [--apply] [--json]
 3. Log: `uv run vault-search-log lint "Health check" --summary "Fixed N issues"`
 
 **Migrate** -- Upgrade existing vault to LLM Wiki pattern:
-1. Preview: `uv run vault-search-migrate`
+1. Preview: `uv run vault-search-migrate` (assisted mode, classifies and moves files)
 2. Apply: `uv run vault-search-migrate --apply`
-3. Creates raw/ and wiki/ dirs, adds missing frontmatter, initializes operation log
-4. Non-destructive and idempotent -- safe to run multiple times
+3. Manual mode (no file moves): `uv run vault-search-migrate --mode manual --apply`
+4. Assisted mode classifies files as raw/wiki/unknown, moves them to correct dirs, updates wikilinks
+5. Idempotent -- safe to run multiple times
 
 ## Development
 

@@ -6,7 +6,7 @@
 
 <p align="center">
 
-[![Version](https://img.shields.io/badge/version-0.4.1-green?style=flat-square)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.4.2-green?style=flat-square)](CHANGELOG.md)
 [![PyPI](https://img.shields.io/pypi/v/obsidian-qdrant-search?style=flat-square)](https://pypi.org/project/obsidian-qdrant-search/)
 [![Python](https://img.shields.io/pypi/pyversions/obsidian-qdrant-search?style=flat-square)](https://pypi.org/project/obsidian-qdrant-search/)
 [![License](https://img.shields.io/pypi/l/obsidian-qdrant-search?style=flat-square)](LICENSE)
@@ -126,23 +126,50 @@ Inspired by [Karpathy's LLM Wiki](https://gist.github.com/karpathy/1dd0294ef9567
 
 ### Migration from older versions
 
-Existing vaults can be upgraded with the migration tool. From **Claude Code** (or any MCP client), just ask in natural language:
+The migration tool upgrades an existing vault to the LLM Wiki three-layer structure. It always shows a preview first — no changes are applied until you confirm.
 
-> "migrate my vault to the LLM Wiki pattern"
+#### Assisted mode (default)
 
-Claude Code will call the `migrate_vault` MCP tool automatically — first in preview mode, then ask for confirmation before applying.
+The tool analyzes every file and classifies it:
 
-From the **command line** (for other agents or manual use):
+| Classification | Heuristic | Action |
+|---|---|---|
+| **wiki** | Has `type` in frontmatter, or contains `[[wikilinks]]` | Moved to `wiki/` |
+| **raw** | No frontmatter, no links (likely a source document) | Moved to `raw/` |
+| **unknown** | Has some frontmatter but no clear signal | Left in place for manual review |
+
+After moving files, it updates all path-based wikilinks (e.g. `[[notes/article]]` becomes `[[raw/notes/article]]`), adds missing frontmatter fields with sensible defaults, and initializes the operation log.
+
+**Safety guarantees:**
+- Subdirectory structure is preserved (`notes/article.md` becomes `raw/notes/article.md`)
+- If a file already exists at the destination, the move is skipped (no overwrites)
+- Empty directories vacated by moves are cleaned up; unrelated empty directories are preserved
+- Idempotent — running it again after a successful migration changes nothing
+
+#### Manual mode
+
+Creates empty `raw/` and `wiki/` directories and adds missing frontmatter, but does **not** move any files. Use this if you prefer to organize files yourself.
+
+#### How to run
+
+From **Claude Code**, ask in natural language:
+
+> "migrate my vault"
+
+From the **command line**:
 
 ```bash
-# Preview what would change
+# Preview (assisted, default)
 VAULT_PATH=/path/to/vault uvx --from obsidian-qdrant-search vault-search-migrate
 
-# Apply changes (creates raw/ and wiki/ dirs, adds missing frontmatter, initializes log)
+# Apply
 VAULT_PATH=/path/to/vault uvx --from obsidian-qdrant-search vault-search-migrate --apply
+
+# Manual mode
+VAULT_PATH=/path/to/vault uvx --from obsidian-qdrant-search vault-search-migrate --mode manual --apply
 ```
 
-The migration is non-destructive (never moves or deletes files) and idempotent (safe to run multiple times). See `CLAUDE.md` for the full document structure rules and conventions.
+See `CLAUDE.md` for the full document structure rules and vault conventions.
 
 ## Agent Skills
 
@@ -408,11 +435,12 @@ Re-indexes the vault into Qdrant. After upgrading, run with `full=true` to rebui
 
 #### migrate_vault
 
-Migrate an existing vault to the LLM Wiki pattern. Creates `raw/` and `wiki/` directories, adds missing frontmatter fields with sensible defaults, and initializes the operation log. Non-destructive and idempotent.
+Migrate an existing vault to the LLM Wiki pattern. See [Migration from older versions](#migration-from-older-versions) for a detailed explanation of both modes.
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `confirm` | bool | false | Set to `true` to apply (default returns preview) |
+| `mode` | string | `"assisted"` | `"assisted"` (classify, move, update links) or `"manual"` (dirs + frontmatter only) |
 
 ## CLI Commands
 

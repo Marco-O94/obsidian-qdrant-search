@@ -397,8 +397,284 @@ class TestMigrateVaultApply:
         (vault / "note.md").write_text("# Note\n\nContent.\n")
 
         # Act
-        migrate.migrate_vault(confirm=True)
+        migrate.migrate_vault(confirm=True, mode="manual")
 
         # Assert
         log_content = (vault / "_log.md").read_text()
         assert "migration" in log_content.lower() or "Migration" in log_content
+
+
+# ---------------------------------------------------------------------------
+# _plan_moves
+# ---------------------------------------------------------------------------
+
+
+class TestPlanMoves:
+    def test_classifies_raw_file(self, vault):
+        """File with no frontmatter is planned to move to raw/."""
+        # Arrange
+        (vault / "article.md").write_text("Just plain text, no frontmatter.\n")
+
+        # Act
+        moves = migrate._plan_moves(vault)
+
+        # Assert
+        move = next(m for m in moves if m["path"] == "article.md")
+        assert move["classification"] == "raw"
+        assert move["destination"] == "raw/article.md"
+        assert move["action"] == "move"
+
+    def test_classifies_wiki_file(self, vault):
+        """File with type frontmatter is planned to move to wiki/."""
+        # Arrange
+        (vault / "overview.md").write_text(
+            "---\ntype: overview\n---\n# Overview\n\nContent.\n"
+        )
+
+        # Act
+        moves = migrate._plan_moves(vault)
+
+        # Assert
+        move = next(m for m in moves if m["path"] == "overview.md")
+        assert move["classification"] == "wiki"
+        assert move["destination"] == "wiki/overview.md"
+        assert move["action"] == "move"
+
+    def test_unknown_file_skipped(self, vault):
+        """File classified as unknown stays in place."""
+        # Arrange — has frontmatter but no type and no wikilinks
+        (vault / "ambiguous.md").write_text(
+            "---\ntags:\n  - misc\n---\n# Ambiguous\n\nSome text.\n"
+        )
+
+        # Act
+        moves = migrate._plan_moves(vault)
+
+        # Assert
+        move = next(m for m in moves if m["path"] == "ambiguous.md")
+        assert move["classification"] == "unknown"
+        assert move["destination"] is None
+        assert move["action"] == "skip"
+
+    def test_skips_files_already_in_raw(self, vault):
+        """Files already in raw/ are not included in moves."""
+        # Arrange
+        (vault / "raw").mkdir()
+        (vault / "raw" / "source.md").write_text("Already in raw.\n")
+
+        # Act
+        moves = migrate._plan_moves(vault)
+
+        # Assert
+        paths = [m["path"] for m in moves]
+        assert "raw/source.md" not in paths
+
+    def test_skips_files_already_in_wiki(self, vault):
+        """Files already in wiki/ are not included in moves."""
+        # Arrange
+        (vault / "wiki").mkdir()
+        (vault / "wiki" / "page.md").write_text("Already in wiki.\n")
+
+        # Act
+        moves = migrate._plan_moves(vault)
+
+        # Assert
+        paths = [m["path"] for m in moves]
+        assert "wiki/page.md" not in paths
+
+    def test_preserves_subdirectory_structure(self, vault):
+        """File in a subdir moves to raw/subdir/ or wiki/subdir/."""
+        # Arrange
+        (vault / "notes").mkdir()
+        (vault / "notes" / "plain.md").write_text("No frontmatter at all.\n")
+
+        # Act
+        moves = migrate._plan_moves(vault)
+
+        # Assert
+        move = next(m for m in moves if m["path"] == "notes/plain.md")
+        assert move["destination"] == "raw/notes/plain.md"
+
+
+# ---------------------------------------------------------------------------
+# migrate_vault — assisted mode
+# ---------------------------------------------------------------------------
+
+
+class TestMigrateVaultAssisted:
+    def test_preview_shows_moves(self, vault):
+        """Assisted preview shows planned file moves."""
+        # Arrange
+        (vault / "source.md").write_text("Plain text, no frontmatter.\n")
+        (vault / "page.md").write_text(
+            "---\ntype: entity\n---\n# Entity\n\nContent.\n"
+        )
+
+        # Act
+        result = migrate.migrate_vault(confirm=False, mode="assisted")
+
+        # Assert
+        assert result["mode"] == "assisted"
+        assert result["summary"]["files_to_move"] == 2
+        moves = result["file_moves"]
+        source_move = next(m for m in moves if m["path"] == "source.md")
+        page_move = next(m for m in moves if m["path"] == "page.md")
+        assert source_move["destination"] == "raw/source.md"
+        assert page_move["destination"] == "wiki/page.md"
+
+    def test_preview_no_filesystem_changes(self, vault):
+        """Assisted preview does not move any files."""
+        # Arrange
+        (vault / "source.md").write_text("Plain text.\n")
+
+        # Act
+        migrate.migrate_vault(confirm=False, mode="assisted")
+
+        # Assert
+        assert (vault / "source.md").exists()
+        assert not (vault / "raw" / "source.md").exists()
+
+    def test_apply_moves_files(self, vault):
+        """Assisted apply moves files to correct directories."""
+        # Arrange
+        (vault / "article.md").write_text("No frontmatter content.\n")
+        (vault / "page.md").write_text(
+            "---\ntype: concept\n---\n# Concept\n\nExplanation.\n"
+        )
+
+        # Act
+        result = migrate.migrate_vault(confirm=True, mode="assisted")
+
+        # Assert
+        assert result["applied"] is True
+        assert not (vault / "article.md").exists()
+        assert (vault / "raw" / "article.md").exists()
+        assert not (vault / "page.md").exists()
+        assert (vault / "wiki" / "page.md").exists()
+
+    def test_apply_preserves_subdir_structure(self, vault):
+        """Files in subdirectories maintain their structure after move."""
+        # Arrange
+        (vault / "project").mkdir()
+        (vault / "project" / "readme.md").write_text(
+            "---\ntype: overview\n---\n# Project\n\nInfo.\n"
+        )
+
+        # Act
+        migrate.migrate_vault(confirm=True, mode="assisted")
+
+        # Assert
+        assert not (vault / "project" / "readme.md").exists()
+        assert (vault / "wiki" / "project" / "readme.md").exists()
+
+    def test_apply_adds_frontmatter_after_move(self, vault):
+        """Frontmatter is added to files after they are moved."""
+        # Arrange
+        (vault / "page.md").write_text(
+            "---\ntype: guide\n---\n# Guide\n\nContent.\n"
+        )
+
+        # Act
+        migrate.migrate_vault(confirm=True, mode="assisted")
+
+        # Assert
+        post = frontmatter.load(str(vault / "wiki" / "page.md"))
+        assert post.metadata["type"] == "guide"
+        assert post.metadata["status"] == "draft"
+        assert "project" in post.metadata
+
+    def test_unknown_files_stay_in_place(self, vault):
+        """Files classified as unknown are not moved."""
+        # Arrange
+        (vault / "ambiguous.md").write_text(
+            "---\ntags:\n  - random\n---\n# Maybe\n\nUnclear.\n"
+        )
+
+        # Act
+        migrate.migrate_vault(confirm=True, mode="assisted")
+
+        # Assert
+        assert (vault / "ambiguous.md").exists()
+
+    def test_idempotent(self, vault):
+        """Running assisted apply twice produces zero moves on second run."""
+        # Arrange
+        (vault / "article.md").write_text("Plain text.\n")
+        (vault / "page.md").write_text(
+            "---\ntype: entity\n---\n# Entity\n\nContent.\n"
+        )
+
+        # Act
+        migrate.migrate_vault(confirm=True, mode="assisted")
+        second = migrate.migrate_vault(confirm=True, mode="assisted")
+
+        # Assert
+        assert second["summary"]["files_to_move"] == 0
+        assert second["summary"]["files_needing_frontmatter"] == 0
+
+    def test_skips_destination_collision(self, vault):
+        """If a file already exists at the destination, the move is skipped."""
+        # Arrange
+        (vault / "raw").mkdir()
+        (vault / "raw" / "article.md").write_text("Pre-existing raw file.\n")
+        (vault / "article.md").write_text("New article, no frontmatter.\n")
+
+        # Act
+        result = migrate.migrate_vault(confirm=True, mode="assisted")
+
+        # Assert — source file stays, destination not overwritten
+        assert (vault / "article.md").exists()
+        assert (vault / "raw" / "article.md").read_text() == "Pre-existing raw file.\n"
+
+    def test_updates_path_based_wikilinks(self, vault):
+        """Path-based wikilinks are updated after file moves."""
+        # Arrange
+        (vault / "notes").mkdir()
+        (vault / "notes" / "article.md").write_text("No frontmatter.\n")
+        (vault / "index.md").write_text(
+            "---\ntype: overview\n---\n# Index\n\nSee [[notes/article]] for details.\n"
+        )
+
+        # Act
+        migrate.migrate_vault(confirm=True, mode="assisted")
+
+        # Assert — index moved to wiki/, its link updated
+        content = (vault / "wiki" / "index.md").read_text()
+        assert "[[raw/notes/article]]" in content
+        assert "[[notes/article]]" not in content
+
+    def test_no_prefix_collision_in_wikilinks(self, vault):
+        """Wikilink update does not corrupt links that share a path prefix."""
+        # Arrange
+        (vault / "notes").mkdir()
+        (vault / "notes" / "abc.md").write_text("No frontmatter.\n")
+        (vault / "notes" / "abcdef.md").write_text("No frontmatter either.\n")
+        (vault / "linker.md").write_text(
+            "---\ntype: guide\n---\n# Linker\n\n"
+            "See [[notes/abc]] and [[notes/abcdef]].\n"
+        )
+
+        # Act
+        migrate.migrate_vault(confirm=True, mode="assisted")
+
+        # Assert — both links updated independently, no corruption
+        content = (vault / "wiki" / "linker.md").read_text()
+        assert "[[raw/notes/abc]]" in content
+        assert "[[raw/notes/abcdef]]" in content
+
+    def test_cleanup_only_vacated_dirs(self, vault):
+        """Empty dirs not related to moves are preserved."""
+        # Arrange
+        (vault / "keep-empty").mkdir()
+        (vault / "article.md").write_text("No frontmatter.\n")
+
+        # Act
+        migrate.migrate_vault(confirm=True, mode="assisted")
+
+        # Assert
+        assert (vault / "keep-empty").is_dir()
+
+    def test_invalid_mode_raises(self, vault):
+        """Invalid mode raises ValueError."""
+        with pytest.raises(ValueError, match="Invalid mode"):
+            migrate.migrate_vault(mode="bad")

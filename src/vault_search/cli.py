@@ -220,30 +220,50 @@ def map_cli():
 def migrate_cli():
     """Migrate vault to LLM Wiki pattern from the command line.
 
-    Usage: vault-search-migrate [--apply] [--json]
+    Usage: vault-search-migrate [--mode assisted|manual] [--apply] [--json]
     """
     args = sys.argv[1:]
     confirm = _has_flag(args, "--apply")
     json_output = _has_flag(args, "--json")
+    mode = _parse_flag(args, "--mode", "assisted")
 
     from vault_search.migrate import migrate_vault
 
-    result = migrate_vault(confirm=confirm)
+    result = migrate_vault(confirm=confirm, mode=mode)
 
     if json_output:
         print(json.dumps(result, indent=2))
     else:
         summary = result["summary"]
-        mode = "Applied" if result["applied"] else "Preview"
-        print(f"Vault Migration ({mode})")
+        status = "Applied" if result["applied"] else "Preview"
+        print(f"Vault Migration ({status}, {result['mode']} mode)")
         print(f"  Total files: {summary['total_files']}")
-        print(f"  Files needing frontmatter: {summary['files_needing_frontmatter']}")
         print(f"  Directories to create: {summary['dirs_to_create']}")
         print(f"  Log file to create: {summary['log_to_create']}")
 
+        if result["mode"] == "assisted":
+            print(f"  Files to move: {summary['files_to_move']}")
+            print(f"  Files unknown: {summary['files_unknown']}")
+
+        print(f"  Files needing frontmatter: {summary['files_needing_frontmatter']}")
+
         for d in result["directories"]:
-            status = "exists" if d["exists"] else ("created" if result["applied"] else "will create")
-            print(f"  {d['path']} — {status}")
+            status_str = "exists" if d["exists"] else ("created" if result["applied"] else "will create")
+            print(f"  {d['path']} — {status_str}")
+
+        if result["file_moves"]:
+            moves = [m for m in result["file_moves"] if m["action"] == "move"]
+            skips = [m for m in result["file_moves"] if m["action"] == "skip"]
+
+            if moves:
+                print(f"\nFile moves ({len(moves)} files):")
+                for m in moves:
+                    print(f"  {m['path']} [{m['classification']}] -> {m['destination']}")
+
+            if skips:
+                print(f"\nUnknown files ({len(skips)} — need manual review):")
+                for m in skips:
+                    print(f"  {m['path']}")
 
         if result["frontmatter_changes"]:
             print(f"\nFrontmatter changes ({len(result['frontmatter_changes'])} files):")

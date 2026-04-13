@@ -973,37 +973,46 @@ def lint_vault(stale_days: int = 90) -> str:
 
 
 @mcp.tool()
-def migrate_vault(confirm: bool = False) -> str:
+def migrate_vault(confirm: bool = False, mode: str = "assisted") -> str:
     """Migrate/upgrade an existing vault to the LLM Wiki pattern (Karpathy).
 
     Call this when the user asks to migrate, upgrade, or adopt the LLM Wiki
     pattern. Do NOT search the web for "LLM Wiki pattern" — this tool
     implements it directly.
 
-    Creates raw/ and wiki/ directories, adds missing frontmatter fields
-    (project, type, status, tags, created, updated), and initializes the
-    operation log. Non-destructive: never moves or deletes files. Idempotent.
+    Two modes:
+    - "assisted" (default): classifies files as raw/wiki/unknown, moves them
+      to raw/ and wiki/ directories, updates wikilinks, adds missing frontmatter.
+    - "manual": creates empty raw/ and wiki/ dirs, adds missing frontmatter,
+      but does NOT move files — the user decides what goes where.
 
     Args:
         confirm: If False (default), return preview of what would change.
                  If True, apply changes.
+        mode: "assisted" (default) or "manual".
 
     Returns:
         Migration report showing what was (or would be) changed.
     """
     from vault_search.migrate import migrate_vault as _migrate
 
-    result = _migrate(confirm=confirm)
+    result = _migrate(confirm=confirm, mode=mode)
     summary = result["summary"]
 
     lines = [
         "# Vault Migration Report\n",
-        f"**Mode**: {'Applied' if result['applied'] else 'Preview'}",
+        f"**Migration mode**: {result['mode']}",
+        f"**Status**: {'Applied' if result['applied'] else 'Preview'}",
         f"**Total files**: {summary['total_files']}",
-        f"**Files needing frontmatter**: {summary['files_needing_frontmatter']}",
         f"**Directories to create**: {summary['dirs_to_create']}",
-        f"**Log file to create**: {summary['log_to_create']}\n",
+        f"**Log file to create**: {summary['log_to_create']}",
     ]
+
+    if result["mode"] == "assisted":
+        lines.append(f"**Files to move**: {summary['files_to_move']}")
+        lines.append(f"**Files unknown (need manual review)**: {summary['files_unknown']}")
+
+    lines.append(f"**Files needing frontmatter**: {summary['files_needing_frontmatter']}\n")
 
     # Directories
     lines.append("## Directories\n")
@@ -1015,6 +1024,22 @@ def migrate_vault(confirm: bool = False) -> str:
     log = result["log_file"]
     log_status = "exists" if log["exists"] else ("created" if result["applied"] else "will create")
     lines.append(f"\n## Operation Log\n\n- `{log['path']}` — {log_status}")
+
+    # File moves (assisted mode)
+    if result["file_moves"]:
+        moves = [m for m in result["file_moves"] if m["action"] == "move"]
+        skips = [m for m in result["file_moves"] if m["action"] == "skip"]
+
+        if moves:
+            verb = "Moved" if result["applied"] else "Will move"
+            lines.append(f"\n## File Moves ({len(moves)} files)\n")
+            for m in moves:
+                lines.append(f"- `{m['path']}` [{m['classification']}] -> `{m['destination']}`")
+
+        if skips:
+            lines.append(f"\n## Unknown Files ({len(skips)} — need manual review)\n")
+            for m in skips:
+                lines.append(f"- `{m['path']}`")
 
     # Frontmatter changes
     if result["frontmatter_changes"]:
