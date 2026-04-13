@@ -961,13 +961,10 @@ def lint_vault(stale_days: int = 90) -> dict:
     wikilink_re = re.compile(r'\[\[([^\]|]+)(?:\|[^\]]+)?\]\]')
     cutoff = datetime.now(tz=timezone.utc).timestamp() - stale_days * 86400
 
-    # --- Pass 1: collect all file paths and stems ---
-    all_stems: dict[str, str] = {}
+    # --- Pass 1: collect all file paths ---
     all_paths: set[str] = set()
     for md_file in md_files:
-        rel_path = str(md_file.relative_to(vault))
-        all_stems[md_file.stem] = rel_path
-        all_paths.add(rel_path)
+        all_paths.add(str(md_file.relative_to(vault)))
 
     # --- Pass 2: analyze each file ---
     linked_to: set[str] = set()
@@ -982,21 +979,12 @@ def lint_vault(stale_days: int = 90) -> dict:
 
         stat = md_file.stat()
 
-        # --- Broken links (critical) ---
+        # --- Broken links (critical) — use Obsidian-compatible resolution ---
         for match in wikilink_re.finditer(content):
             target = match.group(1).split("#")[0].strip()
             if not target:
                 continue
-            resolved = False
-            for candidate in [target, target + ".md"]:
-                if candidate in all_paths:
-                    resolved = True
-                    break
-            if not resolved:
-                stem = target.split("/")[-1]
-                if stem in all_stems:
-                    resolved = True
-            if not resolved:
+            if resolve_wikilink_target(target, vault) is None:
                 critical.append({
                     "type": "broken_link",
                     "file": rel_path,

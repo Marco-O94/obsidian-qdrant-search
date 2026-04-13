@@ -85,8 +85,12 @@ def extract_wikilinks(body: str) -> list[str]:
 def resolve_wikilink_target(target: str, vault_path: Path) -> str | None:
     """Resolve a wikilink target to a relative file path.
 
-    Handles: simple names ("my-note"), paths ("folder/my-note"),
-    with or without .md extension, heading anchors ("note#heading").
+    Resolution order (mirrors Obsidian's "shortest path when possible"):
+    1. Exact path match (with and without .md)
+    2. Path suffix match — any file whose path ends with the target
+    3. Filename stem match — any file with matching stem
+
+    Handles heading anchors ("note#heading") by stripping the anchor.
 
     Returns:
         Relative path string or None if not found.
@@ -101,14 +105,26 @@ def resolve_wikilink_target(target: str, vault_path: Path) -> str | None:
 
     vault = vault_path.resolve()
 
-    # Try direct path (with and without .md)
+    # 1. Try exact path (with and without .md)
     for candidate in [vault / target, vault / (target + ".md")]:
         if candidate.is_file():
             result = str(candidate.relative_to(vault))
             _wikilink_cache[target] = result
             return result
 
-    # Filename-based search (last segment)
+    # 2. Path suffix match — e.g. "02-modules/auth/README" matches
+    #    "wiki/Projects/X/02-modules/auth/README.md"
+    suffixes = [target, target + ".md"]
+    # Normalize to forward slashes for matching
+    suffixes = [s.replace("\\", "/") for s in suffixes]
+    for md_file in vault.rglob("*.md"):
+        rel = str(md_file.relative_to(vault)).replace("\\", "/")
+        for suffix in suffixes:
+            if rel == suffix or rel.endswith("/" + suffix):
+                _wikilink_cache[target] = rel
+                return rel
+
+    # 3. Filename stem match (last segment only)
     stem = target.split("/")[-1]
     for md_file in vault.rglob("*.md"):
         if md_file.stem == stem:

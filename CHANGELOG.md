@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.3] - 2026-04-13
+
+### Fixed
+
+- **Wikilink resolution**: `resolve_wikilink_target` now supports path suffix matching (e.g. `[[02-modules/auth/README]]` correctly resolves to `wiki/Projects/X/02-modules/auth/README.md`), matching Obsidian's "shortest path when possible" behavior
+- **Migration wikilink updates**: completely rewritten using snapshot-before-move approach — resolves all wikilinks BEFORE moving files, then rewrites only the ones that would break. Handles partial paths (`[[02-modules/auth/README]]`), relative paths (`[[../target]]`), and aliased links (`[[target|display]]`)
+- **`find_broken_links`**: now uses `resolve_wikilink_target` instead of ad-hoc resolution logic, eliminating false positives for partial path wikilinks
+- **`lint_vault`**: broken link detection unified with `resolve_wikilink_target` for consistent results
+- **140 tests** (was 138)
+
 ## [0.4.2] - 2026-04-13
 
 ### Added

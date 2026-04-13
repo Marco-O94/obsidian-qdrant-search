@@ -674,12 +674,9 @@ def find_broken_links() -> str:
         List of broken links with source file and target.
     """
     from vault_search.config import VAULT_PATH as vault_path
-    from vault_search.indexer import find_markdown_files
+    from vault_search.indexer import find_markdown_files, resolve_wikilink_target
 
-    # Scan filesystem directly for accuracy
     md_files = find_markdown_files(vault_path)
-    all_stems = {f.stem: str(f.relative_to(vault_path)) for f in md_files}
-    all_paths = set(all_stems.values())
 
     broken = []
     wikilink_re = __import__("re").compile(r'\[\[([^\]|]+)(?:\|[^\]]+)?\]\]')
@@ -696,17 +693,7 @@ def find_broken_links() -> str:
             if not target:
                 continue
 
-            # Try to resolve
-            resolved = False
-            for candidate in [target, target + ".md"]:
-                if candidate in all_paths:
-                    resolved = True
-                    break
-            if not resolved:
-                stem = target.split("/")[-1]
-                if stem in all_stems:
-                    resolved = True
-            if not resolved:
+            if resolve_wikilink_target(target, vault_path) is None:
                 broken.append({"source": rel_path, "target": target})
 
     if not broken:

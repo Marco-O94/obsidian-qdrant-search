@@ -321,57 +321,114 @@ def _cleanup_empty_dirs(vault: Path, vacated_dirs: set[Path]) -> None:
             pass
 
 
-def _update_wikilinks_after_moves(vault: Path, moves: list[dict]) -> int:
-    """Update path-based wikilinks across the vault to reflect file moves.
+def _snapshot_wikilinks(vault: Path) -> dict[str, list[tuple[str, str]]]:
+    """Snapshot all wikilinks and their resolved targets BEFORE moving files.
 
-    Only updates wikilinks that use path-based references (e.g. [[notes/article]]).
-    Simple filename-based links (e.g. [[article]]) are not rewritten because
-    Obsidian resolves them by stem regardless of directory.
-
-    Returns count of files updated.
+    Returns:
+        Dict mapping file_rel_path -> list of (raw_link_text, resolved_target_path).
+        Unresolvable links have resolved_target_path = None.
     """
-    # Build mapping: old_path_no_ext -> new_path_no_ext
-    path_map: list[tuple[str, str]] = []
-    for move in moves:
-        if move["action"] != "move" or not move["destination"]:
-            continue
-        old_ref = str(Path(move["path"]).with_suffix(""))
-        new_ref = str(Path(move["destination"]).with_suffix(""))
-        path_map.append((old_ref, new_ref))
+    from vault_search.indexer import resolve_wikilink_target
 
-    if not path_map:
-        return 0
+    snapshot: dict[str, list[tuple[str, str | None]]] = {}
 
-    # Sort longest-first to avoid prefix collisions
-    # e.g. "notes/abcdef" must be matched before "notes/abc"
-    path_map.sort(key=lambda x: len(x[0]), reverse=True)
-
-    # Build a single regex that matches any of the old paths inside [[ ]]
-    escaped_patterns = [re.escape(old) for old, _ in path_map]
-    # Match [[old_path]] or [[old_path|alias]] or [[old_path#heading]]
-    combined_re = re.compile(
-        r"\[\[(" + "|".join(escaped_patterns) + r")([\]#|])"
-    )
-
-    # Build lookup for replacements
-    replace_map = {old: new for old, new in path_map}
-
-    updated = 0
     for md_file in _find_vault_md_files(vault):
+        rel_path = str(md_file.relative_to(vault))
         try:
             content = md_file.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
             continue
 
-        def _replace(match: re.Match) -> str:
-            old_path = match.group(1)
-            suffix = match.group(2)
-            return f"[[{replace_map[old_path]}{suffix}"
+        links = []
+        for match in WIKILINK_RE.finditer(content):
+            raw_target = match.group(1)
+            clean_target = raw_target.split("#")[0].strip()
+            if clean_target:
+                resolved = resolve_wikilink_target(clean_target, vault)
+                links.append((raw_target, resolved))
 
-        new_content = combined_re.sub(_replace, content)
+        if links:
+            snapshot[rel_path] = links
+
+    return snapshot
+
+
+def _update_wikilinks_after_moves(
+    vault: Path,
+    moves: list[dict],
+    pre_snapshot: dict[str, list[tuple[str, str | None]]],
+) -> int:
+    """Fix wikilinks that broke due to file moves.
+
+    Strategy:
+    1. Use the pre-move snapshot to know what each link USED to resolve to
+    2. Build old_path -> new_path mapping from moves
+    3. For each file, for each link: if the link's old target was moved,
+       rewrite the link to use the shortest suffix of the new path that
+       is unique in the vault
+
+    Returns count of files updated.
+    """
+    from vault_search.indexer import _wikilink_cache
+
+    # Build old_path -> new_path mapping
+    move_map: dict[str, str] = {}
+    for move in moves:
+        if move["action"] == "move" and move["destination"]:
+            move_map[move["path"]] = move["destination"]
+
+    if not move_map:
+        return 0
+
+    # Also map the file that CONTAINS the links (it may have moved too)
+    # Pre-snapshot uses old paths as keys
+    updated = 0
+
+    # Clear wikilink cache since files have moved
+    _wikilink_cache.clear()
+
+    for old_file_path, links in pre_snapshot.items():
+        # Find the current path of this file (it may have been moved)
+        current_file_path = move_map.get(old_file_path, old_file_path)
+        current_abs = vault / current_file_path
+
+        if not current_abs.is_file():
+            continue
+
+        try:
+            content = current_abs.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+
+        new_content = content
+        for raw_target, old_resolved in links:
+            if old_resolved is None:
+                continue  # Was already broken before migration
+
+            # Did the target move?
+            new_target_path = move_map.get(old_resolved)
+            if new_target_path is None:
+                continue  # Target didn't move, link should still work
+
+            # The target moved — rewrite the link
+            # Use the new path without .md extension
+            new_ref = str(Path(new_target_path).with_suffix(""))
+
+            # Replace in content: [[raw_target...]] -> [[new_ref...]]
+            # Handle [[target]], [[target|alias]], [[target#heading]]
+            old_escaped = re.escape(raw_target)
+            pattern = re.compile(r"\[\[" + old_escaped + r"(\|[^\]]+)?\]\]")
+
+            def _make_replacement(new_ref_val: str):
+                def _replace(m: re.Match) -> str:
+                    alias = m.group(1) or ""
+                    return f"[[{new_ref_val}{alias}]]"
+                return _replace
+
+            new_content = pattern.sub(_make_replacement(new_ref), new_content)
 
         if new_content != content:
-            md_file.write_text(new_content, encoding="utf-8")
+            current_abs.write_text(new_content, encoding="utf-8")
             updated += 1
 
     return updated
@@ -443,15 +500,20 @@ def migrate_vault(confirm: bool = False, mode: str = "manual") -> dict:
     if not confirm:
         return result
 
-    # Apply — step 1: create directories (needed before moves)
+    # Apply — step 1: snapshot wikilinks BEFORE moving (assisted mode)
+    pre_snapshot: dict[str, list[tuple[str, str | None]]] = {}
+    if mode == "assisted" and file_moves:
+        pre_snapshot = _snapshot_wikilinks(vault)
+
+    # Apply — step 2: create directories (needed before moves)
     _apply_directory_structure(vault, dir_changes)
 
-    # Apply — step 2: move files (assisted mode only)
+    # Apply — step 3: move files (assisted mode only)
     files_moved = 0
     links_updated = 0
     if mode == "assisted" and file_moves:
         files_moved = _apply_moves(vault, file_moves)
-        links_updated = _update_wikilinks_after_moves(vault, file_moves)
+        links_updated = _update_wikilinks_after_moves(vault, file_moves, pre_snapshot)
 
     # Apply — step 3: re-check frontmatter AFTER moves (paths changed)
     if mode == "assisted" and files_moved > 0:

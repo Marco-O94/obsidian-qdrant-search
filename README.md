@@ -6,7 +6,7 @@
 
 <p align="center">
 
-[![Version](https://img.shields.io/badge/version-0.4.2-green?style=flat-square)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.4.3-green?style=flat-square)](CHANGELOG.md)
 [![PyPI](https://img.shields.io/pypi/v/obsidian-qdrant-search?style=flat-square)](https://pypi.org/project/obsidian-qdrant-search/)
 [![Python](https://img.shields.io/pypi/pyversions/obsidian-qdrant-search?style=flat-square)](https://pypi.org/project/obsidian-qdrant-search/)
 [![License](https://img.shields.io/pypi/l/obsidian-qdrant-search?style=flat-square)](LICENSE)

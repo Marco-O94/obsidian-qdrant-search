@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "obsidian-qdrant-search"
-version = "0.4.2"
+version = "0.4.3"
 description = "MCP server for semantic search and file management over Obsidian vaults using Qdrant and local embeddings"
 requires-python = ">=3.11"
 license = "MIT"

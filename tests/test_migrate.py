@@ -674,6 +674,49 @@ class TestMigrateVaultAssisted:
         # Assert
         assert (vault / "keep-empty").is_dir()
 
+    def test_fixes_partial_path_wikilinks(self, vault):
+        """Partial path wikilinks like [[02-modules/auth/README]] are updated."""
+        # Arrange — simulate a real project structure
+        (vault / "Projects" / "myapp" / "_agent-context").mkdir(parents=True)
+        (vault / "Projects" / "myapp" / "02-modules" / "auth").mkdir(parents=True)
+
+        (vault / "Projects" / "myapp" / "02-modules" / "auth" / "README.md").write_text(
+            "---\ntype: service-layer\n---\n# Auth Module\n\nAuth docs.\n"
+        )
+        (vault / "Projects" / "myapp" / "_agent-context" / "SUMMARY.md").write_text(
+            "---\ntype: overview\n---\n# Summary\n\nSee [[02-modules/auth/README]] for auth.\n"
+        )
+
+        # Act
+        result = migrate.migrate_vault(confirm=True, mode="assisted")
+
+        # Assert — both files moved to wiki/, link updated
+        summary_path = vault / "wiki" / "Projects" / "myapp" / "_agent-context" / "SUMMARY.md"
+        assert summary_path.exists()
+        content = summary_path.read_text()
+        assert "[[wiki/Projects/myapp/02-modules/auth/README]]" in content
+
+    def test_fixes_relative_parent_path_wikilinks(self, vault):
+        """Wikilinks with ../ relative paths are updated after moves."""
+        # Arrange
+        (vault / "docs" / "sub").mkdir(parents=True)
+        (vault / "docs" / "target.md").write_text(
+            "---\ntype: guide\n---\n# Target\n\nTarget page.\n"
+        )
+        (vault / "docs" / "sub" / "source.md").write_text(
+            "---\ntype: guide\n---\n# Source\n\nSee [[../target]] for info.\n"
+        )
+
+        # Act
+        migrate.migrate_vault(confirm=True, mode="assisted")
+
+        # Assert — the ../ link should be rewritten to the new path
+        source = vault / "wiki" / "docs" / "sub" / "source.md"
+        assert source.exists()
+        content = source.read_text()
+        # The link should reference the new wiki path
+        assert "wiki/docs/target" in content
+
     def test_invalid_mode_raises(self, vault):
         """Invalid mode raises ValueError."""
         with pytest.raises(ValueError, match="Invalid mode"):
