@@ -6,7 +6,7 @@
 
 <p align="center">
 
-[![Version](https://img.shields.io/badge/version-0.3.1-green?style=flat-square)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.4.0-green?style=flat-square)](CHANGELOG.md)
 [![PyPI](https://img.shields.io/pypi/v/obsidian-qdrant-search?style=flat-square)](https://pypi.org/project/obsidian-qdrant-search/)
 [![Python](https://img.shields.io/pypi/pyversions/obsidian-qdrant-search?style=flat-square)](https://pypi.org/project/obsidian-qdrant-search/)
 [![License](https://img.shields.io/pypi/l/obsidian-qdrant-search?style=flat-square)](LICENSE)
@@ -27,9 +27,10 @@ MCP server for **semantic search** and **file management** over an Obsidian vaul
 | **?** | [Why?](#why) | The problem this solves |
 | **✨** | [Features](#features) | Full feature list |
 | **⚡** | [Quick Start](#quick-start) | Installation and setup |
+| **📖** | [LLM Wiki Pattern](#llm-wiki-pattern) | Karpathy-inspired knowledge base model |
 | **🤖** | [Agent Skills](#agent-skills) | Skill and agent for Claude Code |
-| **🔧** | [MCP Tools](#mcp-tools) | All 23 tools — Search, Read, Write, Discover, Graph, Batch, Maintenance |
-| **💻** | [CLI Commands](#cli-commands) | Command-line interface |
+| **🔧** | [MCP Tools](#mcp-tools) | All 27 tools — Search, Read, Write, Discover, Graph, Batch, Log, Health, Maintenance |
+| **💻** | [CLI Commands](#cli-commands) | Command-line interface for any agent |
 | **🏗️** | [Architecture](#architecture) | How it works under the hood |
 | **📁** | [Project Structure](#project-structure) | File layout |
 
@@ -49,6 +50,7 @@ Additionally, it provides **full CRUD file operations** directly on the vault fi
 
 ## Features
 
+- **LLM Wiki pattern** — Karpathy-inspired three-layer architecture for persistent, compounding knowledge bases
 - **Semantic search** — find docs by meaning, not just keywords
 - **Full file management** — read, create, update, append, patch, and delete vault files
 - **Targeted patching** — modify specific sections by heading or frontmatter field
@@ -57,6 +59,10 @@ Additionally, it provides **full CRUD file operations** directly on the vault fi
 - **Frontmatter filters** — narrow results by project, document type, or tags
 - **Context expansion** — fetch adjacent chunks around a search result
 - **Wikilink graph** — navigate backlinks, outgoing links, find broken links and orphan files
+- **Vault health checks** — comprehensive lint with broken links, orphans, stale docs, missing metadata
+- **Operation log** — chronological record of ingest, query, lint, and maintenance actions
+- **Vault migration** — non-destructive upgrade of existing vaults to the LLM Wiki conventions
+- **Multi-agent CLI** — 7 CLI commands with `--json` output for any agent (Codex, OpenCode, etc.)
 - **Vault map** — visualize directory structure with file counts
 - **Frontmatter schema discovery** — see all fields, types, and usage across the vault
 - **Tag discovery** — list all tags (frontmatter + inline) with occurrence counts
@@ -102,6 +108,36 @@ Qdrant is started automatically via Docker when needed. If a `qdrant` container 
 VAULT_PATH=/path/to/your/vault uvx --from obsidian-qdrant-search vault-index --full
 ```
 
+## LLM Wiki Pattern
+
+Inspired by [Karpathy's LLM Wiki](https://gist.github.com/karpathy/1dd0294ef9567971c1e4348a90d69285), this project supports a three-layer architecture for building persistent, compounding knowledge bases maintained by LLMs:
+
+| Layer | Directory | Purpose |
+|-------|-----------|---------|
+| **Raw sources** | `raw/` | Immutable source documents — articles, papers, transcripts, web clips. The LLM reads from these but never modifies them. |
+| **Wiki** | `wiki/` | LLM-maintained pages — entities, concepts, summaries, syntheses. The LLM owns this layer entirely. |
+| **Schema** | `CLAUDE.md` / `AGENTS.md` | Conventions that tell the LLM how the wiki is structured and what workflows to follow. |
+
+### Operations
+
+- **Ingest** — Drop a new source into `raw/`, the LLM reads it, creates/updates wiki pages, adds wikilinks, and logs the operation
+- **Query** — Search the wiki, synthesize answers, and optionally file valuable results back as new wiki pages
+- **Lint** — Run `lint_vault` for a comprehensive health check (broken links, orphans, stale docs, missing metadata)
+
+### Migration from older versions
+
+Existing vaults can be upgraded with the migration tool:
+
+```bash
+# Preview what would change
+VAULT_PATH=/path/to/vault uvx --from obsidian-qdrant-search vault-search-migrate
+
+# Apply changes (creates raw/ and wiki/ dirs, adds missing frontmatter, initializes log)
+VAULT_PATH=/path/to/vault uvx --from obsidian-qdrant-search vault-search-migrate --apply
+```
+
+The migration is non-destructive (never moves or deletes files) and idempotent (safe to run multiple times). See `CLAUDE.md` for the full document structure rules and conventions.
+
 ## Agent Skills
 
 This repo includes Claude Code skills and agents in `.claude/`. Copy the `.claude/` directory into your project to make them available. Claude will automatically discover and use them based on context.
@@ -131,6 +167,7 @@ An autonomous documentation agent that creates, updates, organizes, and maintain
 | `VAULT_PATH` | Current working directory | Path to the Obsidian vault directory |
 | `QDRANT_URL` | `http://localhost:6333` | Qdrant server URL |
 | `COLLECTION_NAME` | `vault_docs` | Qdrant collection name |
+| `VAULT_LOG_FILE` | `_log.md` | Operation log filename |
 
 ## MCP Tools
 
@@ -320,23 +357,82 @@ Rename a tag across all vault files (both frontmatter and inline `#tags`).
 | `new_tag` | string | required | New tag name (without `#`) |
 | `confirm` | bool | false | Set to `true` to apply (default returns preview) |
 
+### Log
+
+#### log_operation
+
+Append a structured entry to the vault operation log.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `operation_type` | string | required | `"ingest"`, `"query"`, `"lint"`, or `"maintenance"` |
+| `title` | string | required | Short title for the entry |
+| `summary` | string | `""` | Optional description |
+| `pages_touched` | list | `[]` | Optional list of modified file paths |
+| `source` | string | `""` | Optional source file path (for ingest) |
+
+#### get_operation_log
+
+Read recent entries from the operation log.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `last_n` | int | 20 | Number of recent entries to return |
+| `filter_type` | string | `""` | Filter by operation type (e.g. `"ingest"`) |
+
+### Health
+
+#### lint_vault
+
+Comprehensive vault health check. Reports broken wikilinks (critical), orphan files (warning), missing frontmatter (warning), stale documents (info), stub documents (info), and isolated pages (info).
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `stale_days` | int | 90 | Flag files not modified within this many days |
+
 ### Maintenance
 
 #### reindex_vault
 
-Re-indexes the vault into Qdrant. After upgrading to v0.3.0, run with `full=true` to index wikilink data.
+Re-indexes the vault into Qdrant. After upgrading, run with `full=true` to rebuild the index.
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `full` | bool | false | If true, drops and recreates the collection |
 
+#### migrate_vault
+
+Migrate an existing vault to the LLM Wiki pattern. Creates `raw/` and `wiki/` directories, adds missing frontmatter fields with sensible defaults, and initializes the operation log. Non-destructive and idempotent.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `confirm` | bool | false | Set to `true` to apply (default returns preview) |
+
 ## CLI Commands
+
+### MCP Server & Indexing
 
 | Command | Description |
 |---------|-------------|
 | `obsidian-qdrant-search` | Start the MCP server (stdio transport) |
-| `vault-index` | Run indexing from the command line |
-| `vault-index --full` | Full reindex (drops existing data) |
+| `vault-index [--full]` | Run indexing (incremental by default, `--full` drops and recreates) |
+
+### Multi-Agent CLI
+
+All commands support `--json` for structured output that any agent can parse.
+
+| Command | Description |
+|---------|-------------|
+| `vault-search-search "<query>" [--project X] [--top-k 5] [--json]` | Semantic search |
+| `vault-search-read <filepath>` | Read a vault file |
+| `vault-search-write <filepath> --content "..."` | Create or update a file |
+| `vault-search-lint [--stale-days 90] [--json]` | Vault health check |
+| `vault-search-log <type> "<title>" [--summary "..."] [--source "..."]` | Log an operation |
+| `vault-search-log --read [--last 20] [--filter <type>] [--json]` | Read log entries |
+| `vault-search-map [--depth 3] [--json]` | Show vault structure |
+| `vault-search-migrate [--apply] [--json]` | Migrate vault to LLM Wiki pattern |
+
+These CLI commands make the vault accessible to any agent that can shell out (Codex, OpenCode, etc.), not just MCP-aware clients. See `AGENTS.md` for the full agent-oriented reference.
 
 ## Architecture
 
@@ -366,6 +462,8 @@ obsidian-qdrant-search/
 ├── docker-compose.yml
 ├── CHANGELOG.md
 ├── README.md
+├── CLAUDE.md              # schema layer for Claude Code (auto-loaded)
+├── AGENTS.md              # schema layer for other agents (Codex, OpenCode)
 ├── .claude/
 │   ├── skills/
 │   │   └── vault-search/SKILL.md   # /vault-search slash command
@@ -374,16 +472,20 @@ obsidian-qdrant-search/
 ├── tests/
 │   ├── test_path_utils.py
 │   ├── test_vault_ops.py
-│   └── test_indexer.py
+│   ├── test_indexer.py
+│   ├── test_log.py
+│   ├── test_lint.py
+│   └── test_migrate.py
 └── src/
     └── vault_search/
         ├── __init__.py
         ├── __main__.py      # python -m vault_search
-        ├── cli.py            # vault-index CLI
+        ├── cli.py            # CLI entry points (index + 7 commands)
         ├── config.py         # env-based configuration
         ├── path_utils.py     # path security & validation
-        ├── vault_ops.py      # CRUD & batch file operations
+        ├── vault_ops.py      # CRUD, batch, log, lint operations
+        ├── migrate.py        # vault migration to LLM Wiki pattern
         ├── qdrant.py         # auto-start Qdrant Docker container
-        ├── indexer.py         # markdown parsing, chunking, wikilinks, embedding
-        └── server.py         # MCP server + 23 tools
+        ├── indexer.py        # markdown parsing, chunking, wikilinks, embedding
+        └── server.py         # MCP server + 27 tools
 ```

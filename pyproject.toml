@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "obsidian-qdrant-search"
-version = "0.3.1"
+version = "0.4.0"
 description = "MCP server for semantic search and file management over Obsidian vaults using Qdrant and local embeddings"
 requires-python = ">=3.11"
 license = "MIT"
@@ -42,3 +42,10 @@ packages = ["src/vault_search"]
 [project.scripts]
 obsidian-qdrant-search = "vault_search.server:main"
 vault-index = "vault_search.cli:index_cli"
+vault-search-search = "vault_search.cli:search_cli"
+vault-search-read = "vault_search.cli:read_cli"
+vault-search-write = "vault_search.cli:write_cli"
+vault-search-lint = "vault_search.cli:lint_cli"
+vault-search-log = "vault_search.cli:log_cli"
+vault-search-map = "vault_search.cli:map_cli"
+vault-search-migrate = "vault_search.cli:migrate_cli"

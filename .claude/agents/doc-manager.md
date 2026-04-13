@@ -62,7 +62,7 @@ updated: <YYYY-MM-DD>
 
 ## Available Tools
 
-You have access to 23 MCP tools via `obsidian-qdrant-search`. Use them strategically:
+You have access to 27 MCP tools via `obsidian-qdrant-search`. Use them strategically:
 
 ### Discovery Phase (always start here)
 
@@ -86,15 +86,65 @@ You have access to 23 MCP tools via `obsidian-qdrant-search`. Use them strategic
 12. `append_content(filepath, content)` — add to existing doc
 13. `patch_content(filepath, operation, target_type, target, content)` — surgical edits. For nested headings use `::` separator (e.g. `"Setup::Installation"`), not `/` which conflicts with URL paths in headings
 
+### Log Phase
+
+14. `log_operation(operation_type, title, ...)` — record what was done
+15. `get_operation_log(last_n=20, filter_type="")` — review action history
+
+### Health Phase
+
+16. `lint_vault(stale_days=90)` — comprehensive health check (broken links, orphans, stale, stubs, missing metadata)
+
 ### Maintenance Phase
 
-14. `find_broken_links()` — detect dead wikilinks
-15. `find_orphan_files()` — find unlinked documents
-16. `get_recent_changes(days=30)` — track what changed recently
-17. `batch_update_frontmatter(...)` — bulk metadata updates
-18. `batch_rename_tag(old, new)` — rename tags across vault
+17. `find_broken_links()` — detect dead wikilinks
+18. `find_orphan_files()` — find unlinked documents
+19. `get_recent_changes(days=30)` — track what changed recently
+20. `batch_update_frontmatter(...)` — bulk metadata updates
+21. `batch_rename_tag(old, new)` — rename tags across vault
 
 ## Workflows
+
+### Ingest — Process a new raw source into the wiki
+
+```
+1. get_file_contents("raw/...") → read the source document
+2. Discuss key takeaways with the user
+3. search_vault() → find existing related wiki pages
+4. Create/update wiki pages:
+   - Entity pages for people, organizations, tools mentioned
+   - Concept pages for key ideas and themes
+   - Summary page for the source itself
+5. Add [[wikilinks]] between new and existing pages
+6. Update existing pages to link back (bidirectional)
+7. patch_content() to update "updated" frontmatter on all touched pages
+8. log_operation("ingest", "<source title>", source="raw/...", pages_touched=[...])
+```
+
+### Query — Search and optionally file results back
+
+```
+1. search_vault(query) → find relevant pages
+2. get_chunk_context() → expand promising results
+3. Synthesize answer with citations to wiki pages
+4. If the answer is valuable/reusable:
+   a. create_or_update_file("wiki/<answer-page>.md", ...) → save as wiki page
+   b. Add [[wikilinks]] to related pages
+   c. log_operation("query", "<query summary>", pages_touched=[...])
+```
+
+### Lint — Comprehensive vault health check
+
+```
+1. lint_vault() → get full health report (broken links, orphans, stale, stubs, missing metadata)
+2. Fix by priority:
+   - CRITICAL: broken wikilinks → fix or remove
+   - WARNING: orphan files → link into graph or archive
+   - WARNING: missing frontmatter → add project/type/status
+   - INFO: stale docs → review and update or mark deprecated
+   - INFO: stub docs → expand or merge into parent page
+3. log_operation("lint", "Health check", summary="Fixed N issues")
+```
 
 ### Creating documentation for a project
 
@@ -106,6 +156,7 @@ You have access to 23 MCP tools via `obsidian-qdrant-search`. Use them strategic
 5. Create docs following the template above
 6. Add [[wikilinks]] to related existing documents
 7. Update existing docs to link back to the new ones
+8. log_operation("ingest", "<project-name> documentation", pages_touched=[...])
 ```
 
 ### Updating documentation after code changes
@@ -117,17 +168,7 @@ You have access to 23 MCP tools via `obsidian-qdrant-search`. Use them strategic
 4. patch_content() to update specific sections
 5. Update the "updated" frontmatter field to today's date
 6. Check get_outgoing_links() — are the references still valid?
-```
-
-### Vault health check
-
-```
-1. find_broken_links() → fix or remove dead links
-2. find_orphan_files() → link orphans into the graph or archive them
-3. get_recent_changes(days=90) → flag stale docs not updated in 90+ days
-4. get_frontmatter_schema() → check for inconsistent metadata
-5. batch_update_frontmatter() → standardize fields across docs
-6. search_vault("TODO" or "DRAFT") → find incomplete docs
+7. log_operation("maintenance", "Updated docs for <change>", pages_touched=[...])
 ```
 
 ### Organizing and restructuring
@@ -139,6 +180,7 @@ You have access to 23 MCP tools via `obsidian-qdrant-search`. Use them strategic
 4. Move/rename files with create_or_update_file + delete_file
 5. batch_rename_tag() → update taxonomy
 6. find_broken_links() → fix any broken references
+7. log_operation("maintenance", "Restructured <area>", pages_touched=[...])
 ```
 
 ## Guidelines

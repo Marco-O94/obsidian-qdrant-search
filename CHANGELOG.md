@@ -5,6 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-04-13
+
+### Added
+
+- **LLM Wiki pattern** (inspired by Karpathy): adopted the three-layer architecture (raw sources / wiki pages / schema) as the vault convention model. Documents are structured for incremental, compounding knowledge bases maintained by LLMs
+- **Operation log**: `log_operation` and `get_operation_log` MCP tools — append-only chronological record of vault operations (ingest, query, lint, maintenance) with structured markdown entries
+- **Vault lint**: `lint_vault` MCP tool — comprehensive health check in one call: broken wikilinks (critical), orphan files (warning), missing frontmatter (warning), stale documents (info), stub documents (info), isolated pages with no outgoing links (info)
+- **Vault migration**: `migrate_vault` MCP tool + `vault-search-migrate` CLI — non-destructive, idempotent migration for existing vaults: creates raw/ and wiki/ directories, adds missing frontmatter (project, type, status, tags, created, updated) with sensible defaults, initializes operation log. Preview mode by default, apply with `confirm=True` / `--apply`
+- **CLI interface for multi-agent access**: 6 new CLI commands (`vault-search-search`, `vault-search-read`, `vault-search-write`, `vault-search-lint`, `vault-search-log`, `vault-search-map`) with `--json` output for non-MCP agents (Codex, OpenCode, etc.)
+- **CLAUDE.md**: unified schema document auto-loaded by Claude Code — includes vault conventions, document structure rules, Ingest/Query/Lint workflows, and full 26-tool MCP reference
+- **AGENTS.md**: schema document for non-Claude agents, same conventions with CLI command references
+- **Test suite expanded**: 120 tests (was 76), including operation log, vault lint, and migration coverage
+- **`VAULT_LOG_FILE` env var**: configurable log filename (default `_log.md`)
+
+### Changed
+
+- **MCP server instructions**: expanded from a brief tool listing to a workflow-oriented guide (orient → search → read → write → maintain)
+- **Doc-manager agent**: added Karpathy-style Ingest, Query-to-file, and Lint workflows; added Log and Health tool phases
+- **Vault search skill**: added log and lint tool documentation
+- Server now exposes 27 tools (was 23)
+
+### Fixed
+
+- **Security**: sanitize newlines in `log_operation` title/type to prevent log entry injection
+- **Security**: validate `VAULT_LOG_FILE` env var against path traversal (absolute paths and `..` rejected)
+- **lint_vault**: exclude hidden directories (`.git/`, `.obsidian/`, `.venv/`) from scan — previously generated spurious warnings
+- **get_operation_log**: widen regex to accept hyphenated operation types (e.g. `"my-type"`) — previously silently dropped
+- **log_operation**: use atomic file creation (`open("x")`) to prevent race condition with duplicate headers under concurrent writes
+- **CLI**: validate integer flags (`--top-k`, `--stale-days`, `--last`, `--depth`) with clean error message instead of Python traceback
+- **migrate**: log warnings for files that fail to parse during migration instead of silently skipping
+
 ## [0.3.1] - 2026-03-25
 
 ### Fixed

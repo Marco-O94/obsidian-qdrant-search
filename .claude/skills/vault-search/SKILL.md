@@ -162,6 +162,39 @@ Rename a tag across all files (frontmatter + inline #tags).
 batch_rename_tag(old_tag, new_tag, confirm?)
 ```
 
+### Log
+
+#### log_operation
+Record an action in the vault operation log.
+
+```
+log_operation(operation_type, title, summary?, pages_touched?, source?)
+```
+
+- `operation_type`: "ingest", "query", "lint", or "maintenance"
+- `title`: Short title for the entry
+- `summary`: Optional description
+- `pages_touched`: Optional list of modified file paths
+- `source`: Optional source file path (for ingest)
+
+#### get_operation_log
+Read recent entries from the operation log.
+
+```
+get_operation_log(last_n?, filter_type?)
+```
+
+### Health
+
+#### lint_vault
+Run a comprehensive vault health check.
+
+```
+lint_vault(stale_days?)
+```
+
+Returns report with critical (broken links), warning (orphans, missing metadata), and info (stale, stubs, no outgoing links) issues.
+
 ### Maintenance
 
 #### reindex_vault
