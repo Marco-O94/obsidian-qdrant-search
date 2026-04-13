@@ -11,3 +11,5 @@ CHUNK_SIZE_TOKENS = 512
 CHUNK_OVERLAP_TOKENS = 50
 SIMILARITY_THRESHOLD = 0.5
 TOP_K = 5
+_raw_log = os.environ.get("VAULT_LOG_FILE", "_log.md")
+LOG_FILE = _raw_log if not Path(_raw_log).is_absolute() and ".." not in Path(_raw_log).parts else "_log.md"

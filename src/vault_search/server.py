@@ -13,15 +13,24 @@ from vault_search.config import (
 mcp = FastMCP(
     "obsidian-qdrant-search",
     instructions=(
-        "Full-featured Obsidian vault management with semantic search. "
+        "Obsidian vault management with semantic search and full CRUD. "
+        "WORKFLOW: 1) Orient with get_vault_map/list_projects to understand structure, "
+        "2) Search with search_vault (semantic) or simple_search (text), "
+        "3) Read with get_file_contents/get_file_metadata, "
+        "4) Write with create_or_update_file/append_content/patch_content, "
+        "5) Navigate with get_backlinks/get_outgoing_links, "
+        "6) Maintain with lint_vault for health checks, log_operation to record actions. "
         "SEARCH: search_vault (semantic), simple_search (text), get_chunk_context (expand results). "
         "READ: get_file_contents, get_file_metadata, list_files_in_dir, list_files_in_vault. "
         "WRITE: create_or_update_file, append_content, patch_content (by heading/frontmatter), delete_file. "
         "DISCOVER: list_projects, list_tags, get_recent_changes, get_vault_map, get_frontmatter_schema. "
         "GRAPH: get_backlinks, get_outgoing_links, find_broken_links, find_orphan_files. "
         "BATCH: batch_update_frontmatter, batch_rename_tag (preview with confirm=False, apply with confirm=True). "
+        "LOG: log_operation (record actions), get_operation_log (read history). "
+        "HEALTH: lint_vault (broken links, orphans, stale docs, missing metadata, stubs). "
         "MAINTENANCE: reindex_vault. "
-        "Write operations auto-reindex the modified file in Qdrant."
+        "All write ops auto-reindex. Use patch_content for surgical edits by heading. "
+        "Start with get_vault_map to understand structure before writing."
     ),
 )
 
@@ -829,6 +838,189 @@ def batch_rename_tag(
         return f"Renamed tag `{old_tag}` -> `{new_tag}` in {result['count']} files ({result['frontmatter_changes']} frontmatter, {result['inline_changes']} inline)."
     except ValueError as e:
         return f"Error: {e}"
+
+
+# ---------------------------------------------------------------------------
+# Operation log
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+def log_operation(
+    operation_type: str,
+    title: str,
+    summary: str = "",
+    pages_touched: list[str] | None = None,
+    source: str = "",
+) -> str:
+    """Append a structured entry to the vault operation log.
+
+    Use after ingesting sources, running maintenance, or filing valuable query results.
+
+    Args:
+        operation_type: Type of operation — "ingest", "query", "lint", or "maintenance".
+        title: Short title for the log entry (e.g. article title, query summary).
+        summary: Optional longer description of what was done.
+        pages_touched: Optional list of file paths that were created or modified.
+        source: Optional source file path (for ingest operations).
+
+    Returns:
+        Confirmation with the formatted log entry.
+    """
+    from vault_search import vault_ops
+
+    result = vault_ops.log_operation(
+        operation_type=operation_type,
+        title=title,
+        summary=summary,
+        pages_touched=pages_touched or [],
+        source=source,
+    )
+    return f"Logged to `{result['path']}`:\n\n{result['entry']}"
+
+
+@mcp.tool()
+def get_operation_log(last_n: int = 20, filter_type: str = "") -> str:
+    """Read recent entries from the vault operation log.
+
+    Args:
+        last_n: Number of most recent entries to return (default 20).
+        filter_type: Only return entries of this type (e.g. "ingest", "lint"). Empty for all.
+
+    Returns:
+        Formatted log entries.
+    """
+    from vault_search import vault_ops
+
+    entries = vault_ops.get_operation_log(last_n=last_n, filter_type=filter_type)
+    if not entries:
+        msg = "No log entries found"
+        if filter_type:
+            msg += f" for type '{filter_type}'"
+        return msg + "."
+
+    lines = [f"# Operation Log (last {len(entries)} entries)\n"]
+    for entry in entries:
+        lines.append(f"## [{entry['date']}] {entry['operation_type']} | {entry['title']}")
+        if entry["body"]:
+            lines.append(entry["body"])
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Vault lint
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+def lint_vault(stale_days: int = 90) -> str:
+    """Run a comprehensive health check on the vault.
+
+    Checks for: broken wikilinks, orphan files, missing frontmatter,
+    stale documents, stub documents, and isolated pages (no outgoing links).
+
+    Args:
+        stale_days: Flag files not modified within this many days (default 90).
+
+    Returns:
+        Structured health report grouped by severity.
+    """
+    from vault_search import vault_ops
+
+    result = vault_ops.lint_vault(stale_days=stale_days)
+    summary = result["summary"]
+
+    lines = [
+        "# Vault Health Report\n",
+        f"**Files scanned**: {summary['total_files']}",
+        f"**Critical**: {summary['critical_count']}",
+        f"**Warnings**: {summary['warning_count']}",
+        f"**Info**: {summary['info_count']}\n",
+    ]
+
+    if result["critical"]:
+        lines.append("## Critical\n")
+        for issue in result["critical"]:
+            lines.append(f"- `{issue.get('file', '')}`: {issue['message']}")
+        lines.append("")
+
+    if result["warning"]:
+        lines.append("## Warnings\n")
+        for issue in result["warning"]:
+            lines.append(f"- `{issue.get('file', '')}`: {issue['message']}")
+        lines.append("")
+
+    if result["info"]:
+        lines.append("## Info\n")
+        for issue in result["info"]:
+            lines.append(f"- `{issue.get('file', '')}`: {issue['message']}")
+        lines.append("")
+
+    if not result["critical"] and not result["warning"]:
+        lines.append("Vault is healthy!")
+
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Vault migration
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+def migrate_vault(confirm: bool = False) -> str:
+    """Migrate an existing vault to the LLM Wiki pattern (v0.4.0+).
+
+    Creates raw/ and wiki/ directories, adds missing frontmatter fields
+    (project, type, status, tags, created, updated), and initializes the
+    operation log. Non-destructive: never moves or deletes files.
+
+    Args:
+        confirm: If False (default), return preview of what would change.
+                 If True, apply changes.
+
+    Returns:
+        Migration report showing what was (or would be) changed.
+    """
+    from vault_search.migrate import migrate_vault as _migrate
+
+    result = _migrate(confirm=confirm)
+    summary = result["summary"]
+
+    lines = [
+        "# Vault Migration Report\n",
+        f"**Mode**: {'Applied' if result['applied'] else 'Preview'}",
+        f"**Total files**: {summary['total_files']}",
+        f"**Files needing frontmatter**: {summary['files_needing_frontmatter']}",
+        f"**Directories to create**: {summary['dirs_to_create']}",
+        f"**Log file to create**: {summary['log_to_create']}\n",
+    ]
+
+    # Directories
+    lines.append("## Directories\n")
+    for d in result["directories"]:
+        status = "exists" if d["exists"] else ("created" if result["applied"] else "will create")
+        lines.append(f"- `{d['path']}` — {status}")
+
+    # Log file
+    log = result["log_file"]
+    log_status = "exists" if log["exists"] else ("created" if result["applied"] else "will create")
+    lines.append(f"\n## Operation Log\n\n- `{log['path']}` — {log_status}")
+
+    # Frontmatter changes
+    if result["frontmatter_changes"]:
+        lines.append(f"\n## Frontmatter Changes ({len(result['frontmatter_changes'])} files)\n")
+        for change in result["frontmatter_changes"]:
+            fields = ", ".join(change["missing_fields"])
+            classification = change.get("classification", "unknown")
+            lines.append(f"- `{change['path']}` [{classification}] — missing: {fields}")
+
+    if not result["applied"]:
+        lines.append(f"\nSet `confirm=True` to apply these changes.")
+
+    return "\n".join(lines)
 
 
 def main():

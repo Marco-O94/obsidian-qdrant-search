@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 import frontmatter
 import yaml
 
-from vault_search.config import VAULT_PATH
+from vault_search.config import LOG_FILE, VAULT_PATH
 from vault_search.path_utils import relative_to_vault, resolve_vault_path
 
 
@@ -833,6 +833,254 @@ def _find_matching_files(vault: Path, filter_type: str, filter_value: str) -> li
                     continue
 
     return matching
+
+
+# ---------------------------------------------------------------------------
+# Operation log
+# ---------------------------------------------------------------------------
+
+
+def log_operation(
+    operation_type: str,
+    title: str,
+    summary: str = "",
+    pages_touched: list[str] | None = None,
+    source: str = "",
+) -> dict:
+    """Append a structured entry to the vault operation log.
+
+    Args:
+        operation_type: Type of operation (e.g. "ingest", "query", "lint", "maintenance").
+        title: Short title for the log entry.
+        summary: Optional longer description of what was done.
+        pages_touched: Optional list of files created/modified.
+        source: Optional source file path (for ingest operations).
+
+    Returns:
+        Dict with path, entry (the formatted log entry).
+    """
+    log_path = resolve_vault_path(VAULT_PATH, LOG_FILE)
+    now = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d %H:%M")
+
+    # Sanitize inputs to prevent log entry injection via newlines
+    safe_type = operation_type.replace("\n", " ").replace("\r", " ")
+    safe_title = title.replace("\n", " ").replace("\r", " ")
+
+    lines = [f"\n## [{now}] {safe_type} | {safe_title}\n"]
+    if source:
+        lines.append(f"Source: {source}\n")
+    if pages_touched:
+        lines.append(f"Pages touched: {', '.join(pages_touched)}\n")
+    if summary:
+        lines.append(f"Summary: {summary}\n")
+
+    entry = "\n".join(lines)
+
+    header = "# Operation Log\n\nChronological record of vault operations.\n"
+    try:
+        with log_path.open("x", encoding="utf-8") as f:
+            f.write(header + entry)
+    except FileExistsError:
+        with log_path.open("a", encoding="utf-8") as f:
+            f.write(entry)
+
+    return {"path": LOG_FILE, "entry": entry.strip()}
+
+
+def get_operation_log(last_n: int = 20, filter_type: str = "") -> list[dict]:
+    """Read entries from the operation log.
+
+    Args:
+        last_n: Number of most recent entries to return.
+        filter_type: If set, only return entries matching this operation type.
+
+    Returns:
+        List of dicts with date, operation_type, title, body.
+    """
+    log_path = VAULT_PATH / LOG_FILE
+    if not log_path.exists():
+        return []
+
+    content = log_path.read_text(encoding="utf-8")
+    entry_re = re.compile(
+        r"^## \[(\d{4}-\d{2}-\d{2} \d{2}:\d{2})\] ([\w-]+) \| (.+)$",
+        re.MULTILINE,
+    )
+
+    entries = []
+    matches = list(entry_re.finditer(content))
+
+    for i, match in enumerate(matches):
+        op_type = match.group(2)
+        if filter_type and op_type.lower() != filter_type.lower():
+            continue
+
+        # Body is everything between this match and the next
+        start = match.end()
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(content)
+        body = content[start:end].strip()
+
+        entries.append({
+            "date": match.group(1),
+            "operation_type": op_type,
+            "title": match.group(3),
+            "body": body,
+        })
+
+    return entries[-last_n:]
+
+
+# ---------------------------------------------------------------------------
+# Vault lint
+# ---------------------------------------------------------------------------
+
+
+def lint_vault(stale_days: int = 90) -> dict:
+    """Run a comprehensive health check on the vault.
+
+    Args:
+        stale_days: Flag files not modified within this many days as stale.
+
+    Returns:
+        Dict with issues grouped by severity (critical, warning, info),
+        each containing a list of {type, message, file?} dicts, plus summary counts.
+    """
+    from vault_search.indexer import extract_wikilinks, resolve_wikilink_target
+
+    vault = VAULT_PATH.resolve()
+    # Exclude hidden directories (.git, .obsidian, .venv, etc.)
+    md_files = sorted(
+        f for f in vault.rglob("*.md")
+        if not any(part.startswith(".") for part in f.relative_to(vault).parts)
+    )
+
+    critical: list[dict] = []
+    warning: list[dict] = []
+    info: list[dict] = []
+
+    wikilink_re = re.compile(r'\[\[([^\]|]+)(?:\|[^\]]+)?\]\]')
+    cutoff = datetime.now(tz=timezone.utc).timestamp() - stale_days * 86400
+
+    # --- Pass 1: collect all file paths and stems ---
+    all_stems: dict[str, str] = {}
+    all_paths: set[str] = set()
+    for md_file in md_files:
+        rel_path = str(md_file.relative_to(vault))
+        all_stems[md_file.stem] = rel_path
+        all_paths.add(rel_path)
+
+    # --- Pass 2: analyze each file ---
+    linked_to: set[str] = set()
+
+    for md_file in md_files:
+        rel_path = str(md_file.relative_to(vault))
+
+        try:
+            content = md_file.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+
+        stat = md_file.stat()
+
+        # --- Broken links (critical) ---
+        for match in wikilink_re.finditer(content):
+            target = match.group(1).split("#")[0].strip()
+            if not target:
+                continue
+            resolved = False
+            for candidate in [target, target + ".md"]:
+                if candidate in all_paths:
+                    resolved = True
+                    break
+            if not resolved:
+                stem = target.split("/")[-1]
+                if stem in all_stems:
+                    resolved = True
+            if not resolved:
+                critical.append({
+                    "type": "broken_link",
+                    "file": rel_path,
+                    "message": f"Broken wikilink: [[{target}]]",
+                })
+
+        # --- Track incoming links ---
+        for target in extract_wikilinks(content):
+            resolved = resolve_wikilink_target(target, vault)
+            if resolved:
+                linked_to.add(resolved)
+
+        # --- Parse frontmatter ---
+        try:
+            post = frontmatter.load(str(md_file))
+        except Exception:
+            warning.append({
+                "type": "parse_error",
+                "file": rel_path,
+                "message": "Failed to parse frontmatter",
+            })
+            continue
+
+        metadata = post.metadata
+        body_text = post.content.strip()
+
+        # --- Missing frontmatter fields (warning) ---
+        missing_fields = []
+        for required in ("project", "type", "status"):
+            if not metadata.get(required):
+                missing_fields.append(required)
+        if missing_fields:
+            warning.append({
+                "type": "missing_frontmatter",
+                "file": rel_path,
+                "message": f"Missing frontmatter: {', '.join(missing_fields)}",
+            })
+
+        # --- Stub documents (info) ---
+        if len(body_text) < 100:
+            info.append({
+                "type": "stub",
+                "file": rel_path,
+                "message": f"Stub document ({len(body_text)} chars)",
+            })
+
+        # --- Stale documents (info) ---
+        if stat.st_mtime < cutoff:
+            days_old = int((datetime.now(tz=timezone.utc).timestamp() - stat.st_mtime) / 86400)
+            info.append({
+                "type": "stale",
+                "file": rel_path,
+                "message": f"Not modified in {days_old} days",
+            })
+
+        # --- Isolated pages: no outgoing wikilinks (info) ---
+        has_outgoing = bool(wikilink_re.search(content))
+        if not has_outgoing:
+            info.append({
+                "type": "no_outgoing_links",
+                "file": rel_path,
+                "message": "No outgoing wikilinks",
+            })
+
+    # --- Orphan files: no incoming links (warning) ---
+    orphans = sorted(all_paths - linked_to)
+    for orphan in orphans:
+        warning.append({
+            "type": "orphan",
+            "file": orphan,
+            "message": "No incoming wikilinks (orphan)",
+        })
+
+    return {
+        "critical": critical,
+        "warning": warning,
+        "info": info,
+        "summary": {
+            "total_files": len(md_files),
+            "critical_count": len(critical),
+            "warning_count": len(warning),
+            "info_count": len(info),
+        },
+    }
 
 
 # ---------------------------------------------------------------------------
