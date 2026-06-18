@@ -90,7 +90,7 @@ The guided installer detects which AI CLIs you have (Claude Code, Gemini CLI, Co
 ./scripts/install-mcp.sh
 ```
 
-It is idempotent — re-running updates the existing entry. The Qdrant port defaults to `6333`; pick a dedicated one if 6333 is already taken (the chosen `QDRANT_URL` is written into each client's MCP env so the server connects to that exact instance). You can also drive it non-interactively:
+In a terminal it shows a space-toggle multiselect (↑/↓ move, space toggle, `a` all, enter confirm) with detected clients pre-checked; piped/non-TTY input falls back to typed numbers. It is idempotent — re-running updates the existing entry. The Qdrant port defaults to `6333`; pick a dedicated one if 6333 is already taken (the chosen `QDRANT_URL` is written into each client's MCP env so the server connects to that exact instance). You can also drive it non-interactively:
 
 ```bash
 TARGETS=claude,gemini SCOPE=global VAULT_PATH=/path/to/vault QDRANT_PORT=6333 ./scripts/install-mcp.sh

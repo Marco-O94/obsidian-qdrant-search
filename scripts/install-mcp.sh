@@ -28,6 +28,8 @@ REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 if [ -t 1 ]; then
   BOLD=$(printf '\033[1m'); DIM=$(printf '\033[2m'); RESET=$(printf '\033[0m')
   GREEN=$(printf '\033[32m'); YELLOW=$(printf '\033[33m'); CYAN=$(printf '\033[36m')
+  # Always restore the cursor if we exit mid-menu (Ctrl-C, error).
+  trap 'printf "\033[?25h"' EXIT INT TERM
 else
   BOLD=""; DIM=""; RESET=""; GREEN=""; YELLOW=""; CYAN=""
 fi
@@ -35,7 +37,18 @@ say()  { printf '%s\n' "$*"; }
 info() { printf '%s%s%s\n' "$CYAN" "$*" "$RESET"; }
 ok()   { printf '%s✓%s %s\n' "$GREEN" "$RESET" "$*"; }
 warn() { printf '%s!%s %s\n' "$YELLOW" "$RESET" "$*"; }
-die()  { printf 'error: %s\n' "$*" >&2; exit 1; }
+die()  { printf '%s✗ error:%s %s\n' "$YELLOW" "$RESET" "$*" >&2; exit 1; }
+
+# Surface any unexpected failure instead of dying silently under `set -e`.
+# (Conditionals like `is_installed x && ...` are exempt and won't trigger it.)
+on_err() {
+  local rc=$?
+  printf '\033[?25h'   # ensure the cursor is restored if we died mid-menu
+  printf '%s✗ installer failed%s (line %s, exit %s). Nothing further was written.\n' \
+    "$YELLOW" "$RESET" "${1:-?}" "$rc" >&2
+  exit "$rc"
+}
+trap 'on_err "$LINENO"' ERR
 
 command -v python3 >/dev/null 2>&1 || die "python3 is required (used to edit config files safely)."
 
@@ -76,6 +89,67 @@ is_installed() {
   return 1
 }
 
+# --- Interactive multiselect (space to toggle) -----------------------------
+# Renders the target list in raw-TTY mode: arrows / j,k move the cursor,
+# space toggles, 'a' toggles all, enter confirms. Detected clients start
+# checked. Populates the global SELECTED with the chosen ids. Only called
+# when stdin/stdout are a real terminal (see the caller's guard).
+_ms_ids=""        # space-separated ids, set by multiselect_menu
+_ms_checked=""    # parallel 0/1 flags
+
+multiselect_menu() {
+  local ids; ids=($TARGET_IDS)
+  local n=${#ids[@]} idx cur=0 key rest
+  local checked=()
+  for ((idx=0; idx<n; idx++)); do
+    if is_installed "${ids[$idx]}"; then checked[$idx]=1; else checked[$idx]=0; fi
+  done
+
+  _ms_draw() {
+    local j box flag pointer
+    for ((j=0; j<n; j++)); do
+      [ "${checked[$j]}" = "1" ] && box="${GREEN}◉${RESET}" || box="○"
+      is_installed "${ids[$j]}" && flag="${DIM}(detected)${RESET}" || flag="${DIM}(not found)${RESET}"
+      [ "$j" = "$cur" ] && pointer="${CYAN}❯${RESET}" || pointer=" "
+      printf "  %s %s %s %s\033[K\n" "$pointer" "$box" "$(t_name "${ids[$j]}")" "$flag"
+    done
+  }
+
+  printf "%sWhich clients should be configured?%s  %s↑/↓ move · space toggle · a all · enter confirm%s\n" \
+    "$BOLD" "$RESET" "$DIM" "$RESET"
+  printf '\033[?25l'                      # hide cursor
+  _ms_draw
+  while true; do
+    IFS= read -rsn1 key || break
+    case "$key" in
+      ""|$'\r'|$'\n') break ;;            # enter (raw TTY sends CR)
+      " ") checked[$cur]=$(( 1 - ${checked[$cur]} )) ;;
+      a|A)
+        local anyoff=0
+        for ((idx=0; idx<n; idx++)); do
+          [ "${checked[$idx]}" = "0" ] && anyoff=1 || true
+        done
+        for ((idx=0; idx<n; idx++)); do checked[$idx]=$anyoff; done ;;
+      k) cur=$(( (cur - 1 + n) % n )) ;;
+      j) cur=$(( (cur + 1) % n )) ;;
+      $'\e')                              # arrow keys: ESC [ A/B
+        rest=""; read -rsn2 rest || true  # tolerate partial/lone ESC
+        case "$rest" in
+          "[A") cur=$(( (cur - 1 + n) % n )) ;;
+          "[B") cur=$(( (cur + 1) % n )) ;;
+        esac ;;
+    esac
+    printf '\033[%dA' "$n"                 # cursor up to redraw in place
+    _ms_draw
+  done
+  printf '\033[?25h'                       # show cursor
+
+  _ms_ids=""
+  for ((idx=0; idx<n; idx++)); do
+    [ "${checked[$idx]}" = "1" ] && _ms_ids="$_ms_ids ${ids[$idx]}" || true
+  done
+}
+
 say ""
 say "${BOLD}obsidian-qdrant-search — MCP installer${RESET}"
 say "${DIM}repo: $REPO_DIR${RESET}"
@@ -96,7 +170,12 @@ say ""
 SELECTED=""
 if [ -n "${TARGETS:-}" ]; then
   SELECTED="$(echo "$TARGETS" | tr ',' ' ')"
+elif [ -t 0 ] && [ -t 1 ] && [ "${TERM:-dumb}" != "dumb" ]; then
+  # Interactive space-toggle multiselect (detected clients pre-checked).
+  multiselect_menu
+  SELECTED="$_ms_ids"
 else
+  # Fallback for non-TTY (piped) input: typed numbers.
   say "Select clients to configure (space-separated numbers, e.g. ${BOLD}1 3${RESET}):"
   i=1
   for id in $TARGET_IDS; do
@@ -107,13 +186,13 @@ else
   printf "  a) all detected\n"
   printf "%s> %s" "$BOLD" "$RESET"; read -r picks
   if [ "$picks" = "a" ] || [ "$picks" = "A" ]; then
-    for id in $TARGET_IDS; do is_installed "$id" && SELECTED="$SELECTED $id"; done
+    for id in $TARGET_IDS; do is_installed "$id" && SELECTED="$SELECTED $id" || true; done
   else
     for n in $picks; do
       # Map the typed number to the Nth id in TARGET_IDS.
       sel="$(echo "$TARGET_IDS" | cut -d' ' -f"$n" 2>/dev/null)"
       case " $TARGET_IDS " in
-        *" $sel "*) [ -n "$sel" ] && SELECTED="$SELECTED $sel" ;;
+        *" $sel "*) [ -n "$sel" ] && SELECTED="$SELECTED $sel" || true ;;
         *) warn "ignoring invalid choice '$n'" ;;
       esac
     done
@@ -121,6 +200,11 @@ else
 fi
 SELECTED="$(echo "$SELECTED" | xargs)"   # trim
 [ -n "$SELECTED" ] || die "no clients selected."
+
+# Immediate confirmation of what was picked.
+_names=""
+for id in $SELECTED; do _names="$_names, $(t_name "$id")"; done
+ok "selected:${_names#,}"
 
 # --- Vault path ------------------------------------------------------------
 VAULT="${VAULT_PATH:-}"
@@ -308,16 +392,32 @@ ensure_qdrant() {
 # --- Apply -----------------------------------------------------------------
 say ""
 info "Writing config..."
+WROTE=0; FAILED=0
 for id in $SELECTED; do
   spec="$(config_target "$id")"
   [ -n "$spec" ] || { warn "$(t_name "$id"): unsupported, skipping"; continue; }
   fmt="${spec%%|*}"; path="${spec#*|}"
-  printf "  %s%s%s  " "$BOLD" "$(t_name "$id")" "$RESET"
-  write_config "$fmt" "$path" "$id"
+  printf "  %s%-12s%s " "$BOLD" "$(t_name "$id")" "$RESET"
+  # A single client failing shouldn't abort the rest — capture and report it.
+  if write_config "$fmt" "$path" "$id"; then
+    WROTE=$((WROTE + 1))
+  else
+    FAILED=$((FAILED + 1))
+    warn "could not write config for $(t_name "$id")"
+  fi
 done
 
 ensure_qdrant
 
+# --- Summary ---------------------------------------------------------------
 say ""
-ok "Done."
-say "${DIM}Restart your AI client(s) to load the '$SERVER_NAME' MCP server.${RESET}"
+if [ "$WROTE" -gt 0 ] && [ "$FAILED" -eq 0 ]; then
+  ok "${BOLD}Success${RESET} — '$SERVER_NAME' configured for $WROTE client(s)."
+  say "  ${DIM}vault:${RESET} $VAULT"
+  say "  ${DIM}qdrant:${RESET} $QDRANT_URL"
+  say "${DIM}Restart your AI client(s) to load the MCP server.${RESET}"
+elif [ "$WROTE" -gt 0 ]; then
+  warn "Partial: $WROTE client(s) configured, $FAILED failed. See messages above."
+else
+  die "no client config was written."
+fi
