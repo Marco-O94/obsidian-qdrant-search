@@ -82,6 +82,22 @@ Additionally, it provides **full CRUD file operations** directly on the vault fi
 
 ## Quick start
 
+### Guided install (recommended)
+
+The guided installer detects which AI CLIs you have (Claude Code, Gemini CLI, Codex CLI, Cursor), lets you pick which to configure, asks for your vault path, and writes the MCP-server entry into each client's config for you:
+
+```bash
+./scripts/install-mcp.sh
+```
+
+It is idempotent — re-running updates the existing entry. You can also drive it non-interactively:
+
+```bash
+TARGETS=claude,gemini SCOPE=global VAULT_PATH=/path/to/vault ./scripts/install-mcp.sh
+```
+
+To wire it up by hand instead, follow the manual steps below.
+
 ### 1. MCP Configuration
 
 Add to your `.mcp.json` (project root or Claude Code settings):
