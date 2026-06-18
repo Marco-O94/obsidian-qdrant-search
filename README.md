@@ -84,17 +84,19 @@ Additionally, it provides **full CRUD file operations** directly on the vault fi
 
 ### Guided install (recommended)
 
-The guided installer detects which AI CLIs you have (Claude Code, Gemini CLI, Codex CLI, Cursor), lets you pick which to configure, asks for your vault path, and writes the MCP-server entry into each client's config for you:
+The guided installer detects which AI CLIs you have (Claude Code, Gemini CLI, Codex CLI, Cursor), lets you pick which to configure, asks for your vault path and Qdrant port, writes the MCP-server entry into each client's config, and brings Qdrant up via `docker compose` if it isn't already running:
 
 ```bash
 ./scripts/install-mcp.sh
 ```
 
-It is idempotent — re-running updates the existing entry. You can also drive it non-interactively:
+It is idempotent — re-running updates the existing entry. The Qdrant port defaults to `6333`; pick a dedicated one if 6333 is already taken (the chosen `QDRANT_URL` is written into each client's MCP env so the server connects to that exact instance). You can also drive it non-interactively:
 
 ```bash
-TARGETS=claude,gemini SCOPE=global VAULT_PATH=/path/to/vault ./scripts/install-mcp.sh
+TARGETS=claude,gemini SCOPE=global VAULT_PATH=/path/to/vault QDRANT_PORT=6333 ./scripts/install-mcp.sh
 ```
+
+Env overrides: `TARGETS`, `SCOPE` (`global`/`project`), `VAULT_PATH`, `SERVER_NAME`, `QDRANT_PORT`, `QDRANT_URL`, `SKIP_QDRANT=1`.
 
 To wire it up by hand instead, follow the manual steps below.
 

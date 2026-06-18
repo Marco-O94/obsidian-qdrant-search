@@ -14,6 +14,9 @@
 #   SERVER_NAME=obsidian-vault  pre-set the MCP server key
 #   SCOPE=global|project        pre-set the install scope
 #   TARGETS=claude,gemini,...   pre-set the clients (comma list), skips menu
+#   QDRANT_PORT=6333            host port for Qdrant (default 6333)
+#   SKIP_QDRANT=1               don't try to start Qdrant
+#   QDRANT_URL=http://host:6333 full URL override (wins over QDRANT_PORT)
 #
 set -euo pipefail
 
@@ -144,6 +147,23 @@ if [ -z "$SCOPE" ]; then
 fi
 ok "scope: $SCOPE   server key: $SERVER_NAME"
 
+# --- Qdrant port -----------------------------------------------------------
+# Default is Qdrant's own default (6333). Pick a dedicated port to avoid
+# clashing with another Qdrant already on 6333. The chosen URL is written
+# into each client's MCP env so the server connects to THIS instance, and
+# is reused to bring the container up below.
+QDRANT_PORT="${QDRANT_PORT:-}"
+if [ -z "$QDRANT_PORT" ] && [ -z "${QDRANT_URL:-}" ]; then
+  say ""
+  printf "%sQdrant host port%s [%s6333%s]: " "$BOLD" "$RESET" "$DIM" "$RESET"; read -r p
+  QDRANT_PORT="${p:-6333}"
+fi
+QDRANT_PORT="${QDRANT_PORT:-6333}"
+# QDRANT_URL wins if explicitly exported; otherwise derive from the port.
+QDRANT_URL="${QDRANT_URL:-http://localhost:$QDRANT_PORT}"
+QDRANT_GRPC_PORT="${QDRANT_GRPC_PORT:-$((QDRANT_PORT + 1))}"
+ok "qdrant: $QDRANT_URL"
+
 # --- Config-path resolver --------------------------------------------------
 # Echoes "format|path" for a given target id, or "" if unsupported.
 config_target() {
@@ -170,6 +190,7 @@ write_config() {
   SRV_NAME="$SERVER_NAME" \
   RUN_CMD="$RUN_CMD" RUN_ARGS_JSON="$RUN_ARGS_JSON" \
   VAULT="$VAULT" CFG_FMT="$fmt" CFG_PATH="$path" \
+  Q_URL="$QDRANT_URL" \
   python3 - "$id" <<'PY'
 import json, os, re, sys
 from pathlib import Path
@@ -178,10 +199,11 @@ name   = os.environ["SRV_NAME"]
 cmd    = os.environ["RUN_CMD"]
 args   = json.loads(os.environ["RUN_ARGS_JSON"])
 vault  = os.environ["VAULT"]
+qurl   = os.environ["Q_URL"]
 fmt    = os.environ["CFG_FMT"]
 path   = Path(os.environ["CFG_PATH"])
 
-env = {"VAULT_PATH": vault}
+env = {"VAULT_PATH": vault, "QDRANT_URL": qurl}
 entry = {"command": cmd, "args": args, "env": env}
 
 path.parent.mkdir(parents=True, exist_ok=True)
@@ -227,6 +249,62 @@ elif fmt == "toml":
 PY
 }
 
+# --- Qdrant bring-up --------------------------------------------------------
+# If Qdrant isn't reachable, start it with this repo's docker-compose.yml.
+# Skip entirely with SKIP_QDRANT=1. Non-fatal: a failure here still leaves
+# the MCP config written (the server also auto-starts Qdrant at runtime).
+# QDRANT_URL / QDRANT_PORT / QDRANT_GRPC_PORT were resolved above.
+
+qdrant_reachable() {
+  python3 - "$QDRANT_URL" <<'PY' >/dev/null 2>&1
+import sys, urllib.request
+urllib.request.urlopen(sys.argv[1], timeout=2)
+PY
+}
+
+compose_cmd() {
+  # Prefer the `docker compose` plugin; fall back to legacy `docker-compose`.
+  if docker compose version >/dev/null 2>&1; then echo "docker compose"; return 0; fi
+  command -v docker-compose >/dev/null 2>&1 && { echo "docker-compose"; return 0; }
+  return 1
+}
+
+ensure_qdrant() {
+  [ "${SKIP_QDRANT:-0}" = "1" ] && return 0
+  say ""
+  info "Checking Qdrant..."
+  if qdrant_reachable; then
+    ok "Qdrant already reachable at $QDRANT_URL"
+    return 0
+  fi
+  if ! command -v docker >/dev/null 2>&1; then
+    warn "Docker not found — start Qdrant yourself or install Docker. (config is still written)"
+    return 0
+  fi
+  if ! docker info >/dev/null 2>&1; then
+    warn "Docker daemon not running — start Docker, then Qdrant auto-starts on first tool call."
+    return 0
+  fi
+  local cc; cc="$(compose_cmd)" || {
+    warn "docker compose not available — Qdrant will auto-start at runtime instead."
+    return 0
+  }
+  say "  starting Qdrant on port $QDRANT_PORT via: $cc -f $REPO_DIR/docker-compose.yml up -d"
+  if ! QDRANT_PORT="$QDRANT_PORT" QDRANT_GRPC_PORT="$QDRANT_GRPC_PORT" \
+       $cc -f "$REPO_DIR/docker-compose.yml" up -d; then
+    warn "compose up failed — the server will try to start Qdrant at runtime."
+    return 0
+  fi
+  printf "  waiting for Qdrant"
+  local i=0
+  while [ "$i" -lt 30 ]; do
+    if qdrant_reachable; then say ""; ok "Qdrant is up at $QDRANT_URL"; return 0; fi
+    printf "."; sleep 1; i=$((i+1))
+  done
+  say ""
+  warn "Qdrant did not become ready in 30s — check 'docker ps' / 'docker logs'."
+}
+
 # --- Apply -----------------------------------------------------------------
 say ""
 info "Writing config..."
@@ -238,7 +316,8 @@ for id in $SELECTED; do
   write_config "$fmt" "$path" "$id"
 done
 
+ensure_qdrant
+
 say ""
 ok "Done."
 say "${DIM}Restart your AI client(s) to load the '$SERVER_NAME' MCP server.${RESET}"
-say "${DIM}Qdrant auto-starts via Docker the first time a tool is called.${RESET}"
